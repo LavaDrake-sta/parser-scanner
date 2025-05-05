@@ -1,3 +1,10 @@
-def _main_(par1 int:x):
+def first_func():
 begin
+  var
+    int:z:10;
+end
+
+def _main_():
+begin
+  z = 5; 
 end

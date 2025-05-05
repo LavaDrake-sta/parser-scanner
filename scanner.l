@@ -53,18 +53,18 @@ INT_NUM [1-9][0-9]*|0
 "]"          { printf("[RBRACK] "); return RBRACK; }
 "|"          { printf("[BAR] "); return BAR; }
 
-"=="         { return EQ; }
-"!="         { return NE; }
-">="         { return GE; }
-"<="         { return LE; }
-">"          { return GT; }
-"<"          { return LT; }
-"="          { return ASSIGN; }
-"+"          { return PLUS; }
-"-"          { return MINUS; }
-"*"          { return MULT; }
-"/"          { return DIV; }
-"&"          { return ADDRESS; }
+"=="    { printf("[EQ] "); return EQ; }
+"!="    { printf("[NE] "); return NE; }
+">="    { printf("[GE] "); return GE; }
+"<="    { printf("[LE] "); return LE; }
+">"     { printf("[GT] "); return GT; }
+"<"     { printf("[LT] "); return LT; }
+"="     { printf("[ASSIGN] "); return ASSIGN; }
+"+"     { printf("[PLUS] "); return PLUS; }
+"-"     { printf("[MINUS] "); return MINUS; }
+"*"     { printf("[MULT] "); return MULT; }
+"/"     { printf("[DIV] "); return DIV; }
+"&"     { printf("[ADDRESS] "); return ADDRESS; }
 
 {CHAR_LIT}       { printf("[CHAR:%s] ", yytext); yylval.sval = strdup(yytext); return CHAR_LITERAL; }
 {STRING_LIT}     { printf("[STRING:%s] ", yytext); yylval.sval = strdup(yytext); return STRING_LITERAL; }

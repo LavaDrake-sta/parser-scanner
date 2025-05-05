@@ -10,6 +10,16 @@
     void yyerror(const char* s);
     int yylex();
     int yydebug = 1;
+
+    int has_params(AST* params) {
+        if (!params) return 0;
+        if (strcmp(params->name, "PARS") == 0 && 
+            params->child_count > 0 && 
+            strcmp(params->children[0]->name, "NONE") == 0)
+            return 0;
+        return 1; // יש לפחות פרמטר אחד
+    }
+
 %}
 
 %union {
@@ -22,7 +32,7 @@
 %left MULT DIV
 %left EQ NE GT GE LT LE
 
-%token <sval> ID CHAR_LITERAL STRING_LITERAL NUM
+%token <sval> ID CHAR_LITERAL STRING_LITERAL NUM REAL
 %token <sval> TYPE_INT TYPE_CHAR TYPE_REAL TYPE_BOOL TYPE_STRING TYPE_INT_PTR TYPE_CHAR_PTR TYPE_REAL_PTR
 
 %token DEF T_BEGIN T_END IF ELSE ELIF WHILE FOR DO CALL RETURN RETURNS VAR NULLPTR 
@@ -34,7 +44,7 @@
 %token COLON SEMICOLON COMMA LPAREN RPAREN LBRACK RBRACK BAR
 
 %type <ast> program function function_list param_list param_list_item param_list_item_list elif_list call_list var_decl_list var_assign_list
-%type <ast> type stmt_list stmt assignment expr if_stmt block return_stmt while_stmt do_while_stmt for_stmt var_stmt call_args void_call assignment_call var_assign var_decl
+%type <ast> type stmt_list stmt assignment expr if_stmt block return_stmt while_stmt do_while_stmt for_stmt var_stmt call_args void_call assignment_call var_assign var_decl id
 
 %%
 
@@ -47,7 +57,7 @@ program:
         }
         print_ast($1, 0);
     }
-  | error {
+    | error {
         yyerror("Could not parse input");
     }
 ;
@@ -60,6 +70,8 @@ function_list:
 function:
     /* WITH params AND RETURNS */
     DEF ID LPAREN param_list RPAREN COLON RETURNS type T_BEGIN stmt_list T_END {
+        begin_scope();  // פתח סקופ חדש
+        
         printf("MATCHED: function WITH RETURNS\n");
         $$ = make_node("FUNC", 4,
                        make_node($2, 0),
@@ -67,13 +79,17 @@ function:
                        make_node("RET", 1, $8),
                        make_node("BODY", 1, $10));
                        
-        if (!insert_function($2, $8->name, NULL, 0)) {
-            // השגיאה כבר מודפסת בפונקציה insert_function
+        if (!insert_function($2, $8->name, NULL, 1, $10)) {
+            YYABORT;
         }
+        
+        end_scope();  // סגור סקופ
     }
 
     /* WITHOUT params BUT WITH RETURNS */
     | DEF ID LPAREN RPAREN COLON RETURNS type T_BEGIN stmt_list T_END {
+        begin_scope();  // פתח סקופ חדש
+        
         printf("MATCHED: function WITH RETURNS (empty params)\n");
         $$ = make_node("FUNC", 4,
                        make_node($2, 0),
@@ -81,27 +97,36 @@ function:
                        make_node("RET", 1, $7),
                        make_node("BODY", 1, $9));
                        
-        if (!insert_function($2, $7->name, NULL, 0)) {
-            // השגיאה כבר מודפסת
+        if (!insert_function($2, $7->name, NULL, 0, $9)) {
+            YYABORT;
         }
+        
+        end_scope();  // סגור סקופ
     }
 
     /* WITH params BUT WITHOUT RETURNS */
     | DEF ID LPAREN param_list RPAREN COLON T_BEGIN stmt_list T_END {
+        begin_scope();  // פתח סקופ חדש
+        
         printf("MATCHED: function WITHOUT RETURNS\n");
+        int param_count = has_params($4);
         $$ = make_node("FUNC", 4,
                        make_node($2, 0),
                        $4,
                        make_node("RET", 1, make_node("NONE", 0)),
                        make_node("BODY", 1, $8));
                        
-        if (!insert_function($2, "NONE", NULL, 0)) {
-            // השגיאה כבר מודפסת
+        if (!insert_function($2, "NONE", NULL, param_count, $8)) {
+            YYABORT;
         }
+        
+        end_scope();  // סגור סקופ
     }
 
     /* WITHOUT params AND WITHOUT RETURNS */
     | DEF ID LPAREN RPAREN COLON T_BEGIN stmt_list T_END {
+        begin_scope();  // פתח סקופ חדש
+        
         printf("MATCHED: function WITHOUT RETURNS (empty params)\n");
         $$ = make_node("FUNC", 4,
                        make_node($2, 0),
@@ -109,9 +134,11 @@ function:
                        make_node("RET", 1, make_node("NONE", 0)),
                        make_node("BODY", 1, $7));
                        
-        if (!insert_function($2, "NONE", NULL, 0)) {
-            // השגיאה כבר מודפסת
+        if (!insert_function($2, "NONE", NULL, 0, $7)) {
+            YYABORT;
         }
+        
+        end_scope();  // סגור סקופ
     }
 ;
 
@@ -164,11 +191,15 @@ stmt:
   | var_stmt {printf("DEBUG: matched stmt -> var_stmt\n"); $$ = $1; }
   | assignment_call {printf("DEBUG: matched stmt -> assignment_call\n"); $$ = $1; }
   | void_call {printf("DEBUG: matched stmt -> void_call\n"); $$ = $1; }
+  | function {printf("DEBUG: matched stmt -> function\n"); $$ = $1; }
 ;
 
 assignment:
     ID ASSIGN expr SEMICOLON
     {
+        if (!check_variable_usage($1)) {
+            YYABORT;
+        }
         printf("DEBUG: matched assignment: %s = ...\n", $1);
         $$ = make_node("=", 2, make_node($1, 0), $3);
     }
@@ -177,67 +208,84 @@ assignment:
 
 var_stmt:
     VAR var_decl_list {
-        insert_var_decl_list($2); // פונקציה שלך
+        printf("DEBUG: Starting var_stmt\n");
+        insert_var_decl_list($2);
         $$ = make_node("VAR-DECLS", 1, $2);
     }
 ;
 
+
 var_decl_list:
     var_decl_list var_decl {
+        printf("DEBUG: var_decl_list with 2 items\n");
         $$ = make_node("VARLIST", 2, $1, $2);
     }
   | var_decl {
+        printf("DEBUG: var_decl_list with 1 item\n");
         $$ = $1;
     }
 ;
 
 var_decl:
     TYPE_INT COLON ID COLON expr SEMICOLON {
+        printf("DEBUG: in var_decl - TYPE_INT for variable '%s'\n", $3);
         if (!insert_variable($3, "int")) {
             yyerror("Semantic Error: Variable already declared");
+            YYABORT;
         }
         $$ = make_node("DECL", 2, make_node($3, 0), $5);
     }
     | TYPE_REAL COLON ID COLON expr SEMICOLON {
+        printf("DEBUG: in var_decl - TYPE_REAL for variable '%s'\n", $3);
         if (!insert_variable($3, "real")) {
             yyerror("Semantic Error: Variable already declared");
+            YYABORT;
         }
         $$ = make_node("DECL", 2, make_node($3, 0), $5);
     }
     | TYPE_CHAR COLON ID COLON expr SEMICOLON {
+        printf("DEBUG: in var_decl - TYPE_CHAR for variable '%s'\n", $3);
         if (!insert_variable($3, "char")) {
             yyerror("Semantic Error: Variable already declared");
+            YYABORT;
         }
         $$ = make_node("DECL", 2, make_node($3, 0), $5);
     }
     | TYPE_BOOL COLON ID COLON expr SEMICOLON {
+        printf("DEBUG: in var_decl - TYPE_BOOL for variable '%s'\n", $3);
         if (!insert_variable($3, "bool")) {
             yyerror("Semantic Error: Variable already declared");
+            YYABORT;
         }
         $$ = make_node("DECL", 2, make_node($3, 0), $5);
     }
     | TYPE_STRING COLON ID COLON STRING_LITERAL SEMICOLON {
+        printf("DEBUG: in var_decl - TYPE_STRING for variable '%s'\n", $3);
         if (!insert_variable($3, "string")) {
             yyerror("Semantic Error: Variable already declared");
+            YYABORT;
         }
         $$ = make_node("DECL", 2, make_node($3, 0), make_node($5, 0));
     }
 ;
+
 var_assign_list:
     var_assign_list COMMA var_assign {
+        printf("DEBUG: var_assign_list with comma\n");
         $$ = make_node("VAR-ASSIGN-LIST", 2, $1, $3);
     }
   | var_assign {
+        printf("DEBUG: var_assign_list single item\n");
         $$ = $1;
     }
 ;
 
 var_assign:
     ID COLON expr {
+        printf("DEBUG: var_assign for ID '%s'\n", $1);
         $$ = make_node("ASSIGN", 2, make_node($1, 0), $3);
     }
 ;
-
 return_stmt:
     RETURN expr SEMICOLON { $$ = make_node("RET", 1, $2); }
 ;
@@ -292,6 +340,11 @@ while_stmt:
 
 void_call:
     CALL ID LPAREN call_args RPAREN SEMICOLON {
+        // בדיקה שהפונקציה קיימת
+        if (!function_exists($2)) {
+            fprintf(stderr, "Semantic Error: Function '%s' used before declaration\n", $2);
+            YYABORT;
+        }
         $$ = make_node("CALL", 2, make_node($2, 0), $4);
     }
 ;
@@ -316,15 +369,26 @@ for_stmt:
 
 assignment_call:
     ID ASSIGN CALL ID LPAREN call_args RPAREN SEMICOLON {
+        // בדוק שהמשתנה מוכרז (משמאל לפני השימוש)
+        if (!check_variable_usage($1)) {
+            YYABORT;
+        }
+        // בדוק שהפונקציה קיימת
+        if (!function_exists($4)) {
+            fprintf(stderr, "Semantic Error: Function '%s' used before declaration\n", $4);
+            YYABORT;
+        }
         $$ = make_node("ASSIGN-CALL", 2,
-                       make_node($1, 0),
-                       make_node("CALL", 2, make_node($4, 0), $6));
+                      make_node($1, 0),
+                      make_node("CALL", 2, make_node($4, 0), $6));
     }
 ;
 
 call_args:
     call_list { $$ = $1; }
-    | /* empty */ { $$ = make_node("par", 1, make_node("NONE", 0)); }
+    | /* empty */ {
+        $$ = make_node("par", 1, make_node("NONE", 0)); 
+    }
 ;
 
 call_list:
@@ -340,6 +404,16 @@ block:
     }
 ;
 
+id:
+    ID {
+        // בדוק שהמשתנה מוכרז
+        if (!check_variable_usage($1)) {
+            YYABORT;
+        }
+        $$ = make_node($1, 0);
+    }
+;
+
 expr:
     expr PLUS expr   { $$ = make_node("+", 2, $1, $3); }
   | expr MINUS expr  { $$ = make_node("-", 2, $1, $3); }
@@ -351,19 +425,27 @@ expr:
   | expr GT expr     { $$ = make_node(">", 2, $1, $3); }
   | expr LE expr     { $$ = make_node("<=", 2, $1, $3); }
   | expr GE expr     { $$ = make_node(">=", 2, $1, $3); }
+  | expr AND expr    { $$ = make_node("AND", 2, $1, $3); }
+  | expr OR expr     { $$ = make_node("OR", 2, $1, $3); }
+  | NOT expr         { $$ = make_node("NOT", 1, $2); }
   | LPAREN expr RPAREN { $$ = $2; }
   | LBRACK expr RBRACK   { $$ = $2; }
+  | REAL { $$ = make_node($1, 0); }
   | NUM             { $$ = make_node($1, 0); }
-  | ID              { $$ = make_node($1, 0); }
-  | CHAR_LITERAL    { $$ = make_node($1, 0); } 
-  | STRING_LITERAL  { $$ = make_node($1,0);  }
-  | NULLPTR { $$ = make_node("nullptr",0);}
-  | TRUE    { $$ = make_node("TRUE",0);}
-  | FALSE   { $$ = make_node("FALSE",0);}
-  | AND     { $$ = make_node ("AND",0);}
-  | OR      { $$ = make_node ("OR",0);}
-  | NOT     { $$ = make_node("NOT",0);}
-  | CALL ID LPAREN call_args RPAREN { $$ = make_node("calll",2,make_node($2,0),$4);}
+  | id              { $$ = $1; }  // שינוי: שימוש בכלל id במקום ID
+  | CHAR_LITERAL    { $$ = make_node($1, 0); }
+  | STRING_LITERAL  { $$ = make_node($1,0); }
+  | NULLPTR         { $$ = make_node("nullptr",0);}
+  | TRUE            { $$ = make_node("TRUE",0);}
+  | FALSE           { $$ = make_node("FALSE",0);}
+  | CALL ID LPAREN call_args RPAREN { 
+        // בדיקה שהפונקציה קיימת
+        if (!function_exists($2)) {
+            fprintf(stderr, "Semantic Error: Function '%s' used before declaration\n", $2);
+            YYABORT;
+        }
+        $$ = make_node("calll",2,make_node($2,0),$4);
+    }
 ;
 
 %%
@@ -372,5 +454,7 @@ void yyerror(const char* s) {
 }
 
 int main() {
+    printf("DEBUG: Initializing symbol table\n");
+    init_symbol_table(); 
     return yyparse();
 }
