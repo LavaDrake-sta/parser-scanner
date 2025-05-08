@@ -22,6 +22,7 @@ typedef struct FuncEntry {
     struct FuncEntry* next;
 } FuncEntry;
 
+extern int function_start_scope;
 void init_symbol_table();
 void begin_scope();
 void end_scope();
@@ -36,5 +37,9 @@ int lookup_in_current_scope(const char* name);
 int check_main_signature();
 int main_exists();
 int is_return_stmt_in_main(AST* function_body);
+void begin_function_scope();
+void reset_function_scope();
+char* get_expr_type(AST* expr);
+char** get_call_arg_types(AST* call_args, int* arg_count);
 
 #endif

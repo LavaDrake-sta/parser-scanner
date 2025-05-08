@@ -1,10 +1,21 @@
-def first_func():
+
+
+def func_int_param(x int:a):
 begin
   var
-    int:z:10;
+    int:temp:0;
+  
+  temp = 1;
 end
 
 def _main_():
 begin
-  z = 5; 
+  var
+    int:num:5;
+    real:r:2.5;
+    
+  
+ 
+  call func_int_param(r);
+
 end

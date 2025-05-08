@@ -4,6 +4,7 @@
     #include <stdio.h>
     #include <stdlib.h>
     #include <string.h>
+    #include <ctype.h>
 
     AST* make_node(char* name, int count, ...);
     void print_ast(AST* node, int indent);
@@ -68,78 +69,82 @@ function_list:
 ;
 
 function:
-    /* WITH params AND RETURNS */
-    DEF ID LPAREN param_list RPAREN COLON RETURNS type T_BEGIN stmt_list T_END {
-        begin_scope();  // פתח סקופ חדש
-        
-        printf("MATCHED: function WITH RETURNS\n");
-        $$ = make_node("FUNC", 4,
-                       make_node($2, 0),
-                       $4,
-                       make_node("RET", 1, $8),
-                       make_node("BODY", 1, $10));
-                       
-        if (!insert_function($2, $8->name, NULL, 1, $10)) {
-            YYABORT;
-        }
-        
-        end_scope();  // סגור סקופ
+ /* WITH params AND RETURNS */
+DEF ID LPAREN param_list RPAREN COLON RETURNS type T_BEGIN {
+    begin_function_scope(); // פתח סקופ פונקציה
+} stmt_list T_END {
+    printf("MATCHED: function WITH RETURNS\n");
+    $$ = make_node("FUNC", 4,
+                  make_node($2, 0),
+                  $4,
+                  make_node("RET", 1, $8),
+                  make_node("BODY", 1, $11)); // שים לב שזה $11 ולא $10
+                   
+    if (!insert_function($2, $8->name, NULL, 1, $11)) { // כאן גם
+        YYABORT;
     }
+    
+    end_scope(); // סגור סקופ
+    reset_function_scope(); // איפוס הסקופ בין פונקציות
+}
 
-    /* WITHOUT params BUT WITH RETURNS */
-    | DEF ID LPAREN RPAREN COLON RETURNS type T_BEGIN stmt_list T_END {
-        begin_scope();  // פתח סקופ חדש
-        
-        printf("MATCHED: function WITH RETURNS (empty params)\n");
-        $$ = make_node("FUNC", 4,
-                       make_node($2, 0),
-                       make_node("PARS", 1, make_node("NONE", 0)),
-                       make_node("RET", 1, $7),
-                       make_node("BODY", 1, $9));
-                       
-        if (!insert_function($2, $7->name, NULL, 0, $9)) {
-            YYABORT;
-        }
-        
-        end_scope();  // סגור סקופ
+/* WITHOUT params BUT WITH RETURNS */
+| DEF ID LPAREN RPAREN COLON RETURNS type T_BEGIN {
+    begin_function_scope(); // פתח סקופ פונקציה
+} stmt_list T_END {
+    printf("MATCHED: function WITH RETURNS (empty params)\n");
+    $$ = make_node("FUNC", 4,
+                  make_node($2, 0),
+                  make_node("PARS", 1, make_node("NONE", 0)),
+                  make_node("RET", 1, $7),
+                  make_node("BODY", 1, $10)); // $10 כאן
+                   
+    if (!insert_function($2, $7->name, NULL, 0, $10)) {
+        YYABORT;
     }
+    
+    end_scope(); // סגור סקופ
+    reset_function_scope(); // איפוס הסקופ בין פונקציות
+}
 
-    /* WITH params BUT WITHOUT RETURNS */
-    | DEF ID LPAREN param_list RPAREN COLON T_BEGIN stmt_list T_END {
-        begin_scope();  // פתח סקופ חדש
-        
-        printf("MATCHED: function WITHOUT RETURNS\n");
-        int param_count = has_params($4);
-        $$ = make_node("FUNC", 4,
-                       make_node($2, 0),
-                       $4,
-                       make_node("RET", 1, make_node("NONE", 0)),
-                       make_node("BODY", 1, $8));
-                       
-        if (!insert_function($2, "NONE", NULL, param_count, $8)) {
-            YYABORT;
-        }
-        
-        end_scope();  // סגור סקופ
+/* WITH params BUT WITHOUT RETURNS */
+| DEF ID LPAREN param_list RPAREN COLON T_BEGIN {
+    begin_function_scope(); // פתח סקופ פונקציה
+} stmt_list T_END {
+    printf("MATCHED: function WITHOUT RETURNS\n");
+    int param_count = has_params($4);
+    $$ = make_node("FUNC", 4,
+                  make_node($2, 0),
+                  $4,
+                  make_node("RET", 1, make_node("NONE", 0)),
+                  make_node("BODY", 1, $9)); // $9 כאן
+                   
+    if (!insert_function($2, "NONE", NULL, param_count, $9)) {
+        YYABORT;
     }
+    
+    end_scope(); // סגור סקופ
+    reset_function_scope(); // איפוס הסקופ בין פונקציות
+}
 
-    /* WITHOUT params AND WITHOUT RETURNS */
-    | DEF ID LPAREN RPAREN COLON T_BEGIN stmt_list T_END {
-        begin_scope();  // פתח סקופ חדש
-        
-        printf("MATCHED: function WITHOUT RETURNS (empty params)\n");
-        $$ = make_node("FUNC", 4,
-                       make_node($2, 0),
-                       make_node("PARS", 1, make_node("NONE", 0)),
-                       make_node("RET", 1, make_node("NONE", 0)),
-                       make_node("BODY", 1, $7));
-                       
-        if (!insert_function($2, "NONE", NULL, 0, $7)) {
-            YYABORT;
-        }
-        
-        end_scope();  // סגור סקופ
+/* WITHOUT params AND WITHOUT RETURNS */
+| DEF ID LPAREN RPAREN COLON T_BEGIN {
+    begin_function_scope(); // פתח סקופ פונקציה
+} stmt_list T_END {
+    printf("MATCHED: function WITHOUT RETURNS (empty params)\n");
+    $$ = make_node("FUNC", 4,
+                  make_node($2, 0),
+                  make_node("PARS", 1, make_node("NONE", 0)),
+                  make_node("RET", 1, make_node("NONE", 0)),
+                  make_node("BODY", 1, $8)); // $8 כאן
+                   
+    if (!insert_function($2, "NONE", NULL, 0, $8)) {
+        YYABORT;
     }
+    
+    end_scope(); // סגור סקופ
+    reset_function_scope(); // איפוס הסקופ בין פונקציות
+}
 ;
 
 param_list:
@@ -340,11 +345,25 @@ while_stmt:
 
 void_call:
     CALL ID LPAREN call_args RPAREN SEMICOLON {
-        // בדיקה שהפונקציה קיימת
-        if (!function_exists($2)) {
-            fprintf(stderr, "Semantic Error: Function '%s' used before declaration\n", $2);
+        // בדיקת הפונקציה כולל פרמטרים
+        int arg_count;
+        char** arg_types = get_call_arg_types($4, &arg_count);
+        
+        if (!check_function_call($2, arg_types, arg_count)) {
+            // שחרור הזכרון
+            for (int i = 0; i < arg_count; i++) {
+                free(arg_types[i]);
+            }
+            free(arg_types);
             YYABORT;
         }
+        
+        // שחרור הזכרון
+        for (int i = 0; i < arg_count; i++) {
+            free(arg_types[i]);
+        }
+        free(arg_types);
+        
         $$ = make_node("CALL", 2, make_node($2, 0), $4);
     }
 ;
@@ -369,15 +388,30 @@ for_stmt:
 
 assignment_call:
     ID ASSIGN CALL ID LPAREN call_args RPAREN SEMICOLON {
-        // בדוק שהמשתנה מוכרז (משמאל לפני השימוש)
+        // בדוק שהמשתנה מוכרז
         if (!check_variable_usage($1)) {
             YYABORT;
         }
-        // בדוק שהפונקציה קיימת
-        if (!function_exists($4)) {
-            fprintf(stderr, "Semantic Error: Function '%s' used before declaration\n", $4);
+        
+        // בדיקת הפונקציה כולל פרמטרים
+        int arg_count;
+        char** arg_types = get_call_arg_types($6, &arg_count);
+        
+        if (!check_function_call($4, arg_types, arg_count)) {
+            // שחרור הזכרון
+            for (int i = 0; i < arg_count; i++) {
+                free(arg_types[i]);
+            }
+            free(arg_types);
             YYABORT;
         }
+        
+        // שחרור הזכרון
+        for (int i = 0; i < arg_count; i++) {
+            free(arg_types[i]);
+        }
+        free(arg_types);
+        
         $$ = make_node("ASSIGN-CALL", 2,
                       make_node($1, 0),
                       make_node("CALL", 2, make_node($4, 0), $6));
@@ -439,12 +473,26 @@ expr:
   | TRUE            { $$ = make_node("TRUE",0);}
   | FALSE           { $$ = make_node("FALSE",0);}
   | CALL ID LPAREN call_args RPAREN { 
-        // בדיקה שהפונקציה קיימת
-        if (!function_exists($2)) {
-            fprintf(stderr, "Semantic Error: Function '%s' used before declaration\n", $2);
+        // בדיקת הפונקציה כולל פרמטרים
+        int arg_count;
+        char** arg_types = get_call_arg_types($4, &arg_count);
+        
+        if (!check_function_call($2, arg_types, arg_count)) {
+            // שחרור הזכרון
+            for (int i = 0; i < arg_count; i++) {
+                free(arg_types[i]);
+            }
+            free(arg_types);
             YYABORT;
         }
-        $$ = make_node("calll",2,make_node($2,0),$4);
+        
+        // שחרור הזכרון
+        for (int i = 0; i < arg_count; i++) {
+            free(arg_types[i]);
+        }
+        free(arg_types);
+        
+        $$ = make_node("calll", 2, make_node($2, 0), $4);
     }
 ;
 
