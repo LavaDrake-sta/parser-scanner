@@ -1,21 +1,10 @@
-
-
-def func_int_param(x int:a):
-begin
-  var
-    int:temp:0;
-  
-  temp = 1;
-end
-
 def _main_():
 begin
   var
-    int:num:5;
+    int:a:5;
     real:r:2.5;
+    string:str:"Hello";
     
-  
- 
-  call func_int_param(r);
-
+  a = r;     
+  str[0] = a; 
 end

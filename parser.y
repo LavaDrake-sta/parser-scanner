@@ -9,6 +9,8 @@
     AST* make_node(char* name, int count, ...);
     void print_ast(AST* node, int indent);
     void yyerror(const char* s);
+    extern FuncEntry* get_function_by_name(const char* name);
+    extern char current_function_name[256];
     int yylex();
     int yydebug = 1;
 
@@ -53,7 +55,7 @@ program:
     function_list {
         printf("ENTERED: program -> function_list\n");
         if (!check_main_signature()) {
-            // השגיאה כבר מודפסת בפונקציה
+
             YYABORT;
         }
         print_ast($1, 0);
@@ -71,79 +73,83 @@ function_list:
 function:
  /* WITH params AND RETURNS */
 DEF ID LPAREN param_list RPAREN COLON RETURNS type T_BEGIN {
-    begin_function_scope(); // פתח סקופ פונקציה
+    // בדיקה שטיפוס ההחזרה אינו string (סעיף 9)
+    if (strcmp($8->name, "string") == 0) {
+        fprintf(stderr, "Semantic Error: Function '%s' cannot have string as return type\n", $2);
+        YYABORT;
+    }
+    
+    begin_function_scope($2);
 } stmt_list T_END {
     printf("MATCHED: function WITH RETURNS\n");
     $$ = make_node("FUNC", 4,
-                  make_node($2, 0),
-                  $4,
-                  make_node("RET", 1, $8),
-                  make_node("BODY", 1, $11)); // שים לב שזה $11 ולא $10
-                   
-    if (!insert_function($2, $8->name, NULL, 1, $11)) { // כאן גם
+        make_node($2, 0),
+        $4,
+        make_node("RET", 1, $8),
+        make_node("BODY", 1, $11));
+    
+    if (!insert_function($2, $8->name, NULL, 1, $11)) {
+        YYABORT;
+    }
+    end_scope();
+    reset_function_scope();
+}
+/* WITHOUT params BUT WITH RETURNS */
+| DEF ID LPAREN RPAREN COLON RETURNS type T_BEGIN {
+    if (strcmp($7->name, "string") == 0) {
+        fprintf(stderr, "Semantic Error: Function '%s' cannot have string as return type\n", $2);
         YYABORT;
     }
     
-    end_scope(); // סגור סקופ
-    reset_function_scope(); // איפוס הסקופ בין פונקציות
-}
-
-/* WITHOUT params BUT WITH RETURNS */
-| DEF ID LPAREN RPAREN COLON RETURNS type T_BEGIN {
-    begin_function_scope(); // פתח סקופ פונקציה
+    begin_function_scope($2);
 } stmt_list T_END {
     printf("MATCHED: function WITH RETURNS (empty params)\n");
     $$ = make_node("FUNC", 4,
-                  make_node($2, 0),
-                  make_node("PARS", 1, make_node("NONE", 0)),
-                  make_node("RET", 1, $7),
-                  make_node("BODY", 1, $10)); // $10 כאן
-                   
+        make_node($2, 0),
+        make_node("PARS", 1, make_node("NONE", 0)),
+        make_node("RET", 1, $7),
+        make_node("BODY", 1, $10));
+    
     if (!insert_function($2, $7->name, NULL, 0, $10)) {
         YYABORT;
     }
-    
-    end_scope(); // סגור סקופ
-    reset_function_scope(); // איפוס הסקופ בין פונקציות
+    end_scope();
+    reset_function_scope();
 }
-
 /* WITH params BUT WITHOUT RETURNS */
 | DEF ID LPAREN param_list RPAREN COLON T_BEGIN {
-    begin_function_scope(); // פתח סקופ פונקציה
+    begin_function_scope($2);
 } stmt_list T_END {
     printf("MATCHED: function WITHOUT RETURNS\n");
     int param_count = has_params($4);
     $$ = make_node("FUNC", 4,
-                  make_node($2, 0),
-                  $4,
-                  make_node("RET", 1, make_node("NONE", 0)),
-                  make_node("BODY", 1, $9)); // $9 כאן
-                   
+        make_node($2, 0),
+        $4,
+        make_node("RET", 1, make_node("NONE", 0)),
+        make_node("BODY", 1, $9));
+    
     if (!insert_function($2, "NONE", NULL, param_count, $9)) {
         YYABORT;
     }
-    
-    end_scope(); // סגור סקופ
-    reset_function_scope(); // איפוס הסקופ בין פונקציות
+    end_scope();
+    reset_function_scope();
 }
-
 /* WITHOUT params AND WITHOUT RETURNS */
 | DEF ID LPAREN RPAREN COLON T_BEGIN {
-    begin_function_scope(); // פתח סקופ פונקציה
+    begin_function_scope($2);
 } stmt_list T_END {
     printf("MATCHED: function WITHOUT RETURNS (empty params)\n");
     $$ = make_node("FUNC", 4,
-                  make_node($2, 0),
-                  make_node("PARS", 1, make_node("NONE", 0)),
-                  make_node("RET", 1, make_node("NONE", 0)),
-                  make_node("BODY", 1, $8)); // $8 כאן
-                   
+        make_node($2, 0),
+        make_node("PARS", 1, make_node("NONE", 0)),
+        make_node("RET", 1, make_node("NONE", 0)),
+        make_node("BODY", 1, $8));
+    
     if (!insert_function($2, "NONE", NULL, 0, $8)) {
         YYABORT;
     }
-    
-    end_scope(); // סגור סקופ
-    reset_function_scope(); // איפוס הסקופ בין פונקציות
+    end_scope();
+    reset_function_scope();
 }
 ;
 
@@ -208,8 +214,30 @@ assignment:
         printf("DEBUG: matched assignment: %s = ...\n", $1);
         $$ = make_node("=", 2, make_node($1, 0), $3);
     }
+    | ID LBRACK expr RBRACK ASSIGN expr SEMICOLON
+    {
+        if (!check_variable_usage($1)) {
+            YYABORT;
+        }
+        char* var_type = get_variable_type($1);
+        if (strcmp(var_type, "string") != 0) {
+            fprintf(stderr, "Semantic Error: Array indexing operator [] can only be used with string type, got %s\n", var_type);
+            YYABORT;
+        }
+        char* index_type = get_expr_type($3);
+        if (strcmp(index_type, "int") != 0) {
+            fprintf(stderr, "Semantic Error: Array index must be of type int, got %s\n", index_type);
+            YYABORT;
+        }
+        char* value_type = get_expr_type($6);
+        if (strcmp(value_type, "char") != 0) {
+            fprintf(stderr, "Semantic Error: String cell can only store characters, cannot assign %s\n", value_type);
+            YYABORT;
+        }
+        printf("DEBUG: matched string index assignment: %s[...] = ...\n", $1);
+        $$ = make_node("INDEX_ASSIGN", 3, make_node($1, 0), $3, $6);
+    }
 ;
-
 
 var_stmt:
     VAR var_decl_list {
@@ -218,7 +246,6 @@ var_stmt:
         $$ = make_node("VAR-DECLS", 1, $2);
     }
 ;
-
 
 var_decl_list:
     var_decl_list var_decl {
@@ -291,66 +318,142 @@ var_assign:
         $$ = make_node("ASSIGN", 2, make_node($1, 0), $3);
     }
 ;
+
 return_stmt:
-    RETURN expr SEMICOLON { $$ = make_node("RET", 1, $2); }
+    RETURN expr SEMICOLON
+    {
+        char* return_type = get_expr_type($2);
+        char* declared_return_type = NULL;
+        FuncEntry* func = get_function_by_name(current_function_name);
+        if (func) {
+            declared_return_type = func->return_type;
+        }
+        if (declared_return_type && strcmp(declared_return_type, "NONE") != 0) {
+            if (strcmp(declared_return_type, return_type) != 0) {
+                fprintf(stderr, "Semantic Error: Return type '%s' does not match function declaration '%s' in function '%s'\n",
+                        return_type, declared_return_type, current_function_name);
+                YYABORT;
+            }
+        }
+        $$ = make_node("RET", 1, $2);
+    }
 ;
 
 if_stmt:
     IF expr COLON block ELSE COLON block
     {
+        char* cond_type = get_expr_type($2);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in if statement must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
         $$ = make_node("IF-ELSE", 3, $2, $4, $7);
     }
     | IF expr COLON block
     {
+        char* cond_type = get_expr_type($2);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in if statement must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
         $$ = make_node("IF", 2, $2, $4);
     }
     | IF expr COLON stmt
     {
-        $$ = make_node("IF",2,$2,$4);
+        char* cond_type = get_expr_type($2);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in if statement must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("IF", 2, $2, $4);
     }
     | IF expr COLON stmt ELSE COLON stmt
     {
-        $$ = make_node("IF-ELSE",3,$2,$4,$7);
+        char* cond_type = get_expr_type($2);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in if statement must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("IF-ELSE", 3, $2, $4, $7);
     }
-    |IF expr COLON block elif_list ELSE COLON block
+    | IF expr COLON block elif_list ELSE COLON block
     {
-        $$ = make_node("IF-ELIF_ELSE",4,$2,$4,$5,$8);
-    }            
+        char* cond_type = get_expr_type($2);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in if statement must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("IF-ELIF_ELSE", 4, $2, $4, $5, $8);
+    }
 ;
+
 elif_list:
     ELIF expr COLON block
     {
-        $$ = make_node("ELIF",2,$2,$4);
+        char* cond_type = get_expr_type($2);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in elif statement must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("ELIF", 2, $2, $4);
     }
-    |elif_list ELIF expr COLON block 
+    | elif_list ELIF expr COLON block
     {
-       $$ = make_node("ELIF-elif",3,$1,make_node("elif",2,$3,$5));
+        char* cond_type = get_expr_type($3);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in elif statement must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("ELIF-elif", 3, $1, make_node("elif", 2, $3, $5));
     }
 ;
 
 while_stmt:
-    WHILE COLON expr SEMICOLON 
+    WHILE COLON expr SEMICOLON
     {
-        $$ = make_node("while",1,$3);
+        char* cond_type = get_expr_type($3);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in while loop must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("while", 1, $3);
     }
-    |WHILE expr COLON block 
+    | WHILE expr COLON block
     {
-        $$ = make_node("while",2,$2,$4);
-    } 
-    |WHILE expr COLON stmt
+        char* cond_type = get_expr_type($2);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in while loop must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("while", 2, $2, $4);
+    }
+    | WHILE expr COLON stmt
     {
-        $$ = make_node("while",2,$2,$4);
-    }  
+        char* cond_type = get_expr_type($2);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in while loop must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("while", 2, $2, $4);
+    }
 ;
 
 void_call:
     CALL ID LPAREN call_args RPAREN SEMICOLON {
-        // בדיקת הפונקציה כולל פרמטרים
         int arg_count;
         char** arg_types = get_call_arg_types($4, &arg_count);
         
         if (!check_function_call($2, arg_types, arg_count)) {
-            // שחרור הזכרון
             for (int i = 0; i < arg_count; i++) {
                 free(arg_types[i]);
             }
@@ -358,7 +461,6 @@ void_call:
             YYABORT;
         }
         
-        // שחרור הזכרון
         for (int i = 0; i < arg_count; i++) {
             free(arg_types[i]);
         }
@@ -378,27 +480,38 @@ do_while_stmt:
 for_stmt:
     FOR LPAREN assignment expr SEMICOLON expr RPAREN COLON stmt
     {
-        $$ = make_node("FOR",4,$3,$4,$6,$9);
+        // בדיקה שהתנאי (הביטוי השני) הוא מטיפוס bool
+        char* cond_type = get_expr_type($4);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in for loop must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("FOR", 4, $3, $4, $6, $9);
     }
     | FOR LPAREN assignment expr SEMICOLON expr RPAREN COLON block
     {
-        $$ = make_node("FOR",4,$3,$4,$6,$9);
+        // בדיקה שהתנאי (הביטוי השני) הוא מטיפוס bool
+        char* cond_type = get_expr_type($4);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in for loop must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("FOR", 4, $3, $4, $6, $9);
     }
 ;
 
 assignment_call:
     ID ASSIGN CALL ID LPAREN call_args RPAREN SEMICOLON {
-        // בדוק שהמשתנה מוכרז
         if (!check_variable_usage($1)) {
             YYABORT;
         }
         
-        // בדיקת הפונקציה כולל פרמטרים
         int arg_count;
         char** arg_types = get_call_arg_types($6, &arg_count);
         
         if (!check_function_call($4, arg_types, arg_count)) {
-            // שחרור הזכרון
             for (int i = 0; i < arg_count; i++) {
                 free(arg_types[i]);
             }
@@ -406,7 +519,6 @@ assignment_call:
             YYABORT;
         }
         
-        // שחרור הזכרון
         for (int i = 0; i < arg_count; i++) {
             free(arg_types[i]);
         }
@@ -440,7 +552,6 @@ block:
 
 id:
     ID {
-        // בדוק שהמשתנה מוכרז
         if (!check_variable_usage($1)) {
             YYABORT;
         }
@@ -466,33 +577,42 @@ expr:
   | LBRACK expr RBRACK   { $$ = $2; }
   | REAL { $$ = make_node($1, 0); }
   | NUM             { $$ = make_node($1, 0); }
-  | id              { $$ = $1; }  // שינוי: שימוש בכלל id במקום ID
+  | id              { $$ = $1; } 
   | CHAR_LITERAL    { $$ = make_node($1, 0); }
   | STRING_LITERAL  { $$ = make_node($1,0); }
   | NULLPTR         { $$ = make_node("nullptr",0);}
   | TRUE            { $$ = make_node("TRUE",0);}
   | FALSE           { $$ = make_node("FALSE",0);}
   | CALL ID LPAREN call_args RPAREN { 
-        // בדיקת הפונקציה כולל פרמטרים
         int arg_count;
         char** arg_types = get_call_arg_types($4, &arg_count);
         
         if (!check_function_call($2, arg_types, arg_count)) {
-            // שחרור הזכרון
             for (int i = 0; i < arg_count; i++) {
                 free(arg_types[i]);
             }
             free(arg_types);
             YYABORT;
         }
-        
-        // שחרור הזכרון
         for (int i = 0; i < arg_count; i++) {
             free(arg_types[i]);
         }
         free(arg_types);
-        
         $$ = make_node("calll", 2, make_node($2, 0), $4);
+    }
+    | ID LBRACK expr RBRACK
+    {
+        char* var_type = get_variable_type($1);
+        if (strcmp(var_type, "string") != 0) {
+            fprintf(stderr, "Semantic Error: Array indexing operator [] can only be used with string type, got %s\n", var_type);
+            YYABORT;
+        }
+        char* index_type = get_expr_type($3);
+        if (strcmp(index_type, "int") != 0) {
+            fprintf(stderr, "Semantic Error: Array index must be of type int, got %s\n", index_type);
+            YYABORT;
+        }
+        $$ = make_node("INDEX", 2, make_node($1, 0), $3);
     }
 ;
 

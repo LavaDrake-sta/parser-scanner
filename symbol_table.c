@@ -22,16 +22,13 @@ typedef struct Scope {
 static Scope* scopes[MAX_SCOPE_DEPTH];
 static int scope_depth = 0;
 static FuncEntry* function_table = NULL;
-
+char current_function_name[256] = "";
 int function_start_scope = 0;
 
-// פונקציה לקביעת הטיפוס של ביטוי
 char* get_expr_type(AST* expr) {
     if (!expr) return "unknown";
     
-    // אם זה משתנה (ID)
     if (expr->child_count == 0) {
-        // חפש בטבלת הסמלים
         for (int i = scope_depth - 1; i >= 0; i--) {
             for (VarEntry* v = scopes[i]->vars; v; v = v->next) {
                 if (strcmp(v->name, expr->name) == 0) {
@@ -40,7 +37,6 @@ char* get_expr_type(AST* expr) {
             }
         }
         
-        // אם זה מספר
         if (strchr(expr->name, '.')) {
             return "real";
         } else if (isdigit(expr->name[0])) {
@@ -54,7 +50,6 @@ char* get_expr_type(AST* expr) {
         }
     }
     
-    // אם זה ביטוי מתמטי
     if (strcmp(expr->name, "+") == 0 || strcmp(expr->name, "-") == 0 ||
         strcmp(expr->name, "*") == 0 || strcmp(expr->name, "/") == 0) {
         char* left_type = get_expr_type(expr->children[0]);
@@ -67,7 +62,6 @@ char* get_expr_type(AST* expr) {
         }
     }
     
-    // אם זה ביטוי לוגי
     if (strcmp(expr->name, "==") == 0 || strcmp(expr->name, "!=") == 0 ||
         strcmp(expr->name, "<") == 0 || strcmp(expr->name, ">") == 0 ||
         strcmp(expr->name, "<=") == 0 || strcmp(expr->name, ">=") == 0 ||
@@ -76,7 +70,6 @@ char* get_expr_type(AST* expr) {
         return "bool";
     }
     
-    // אם זה קריאה לפונקציה
     if (strcmp(expr->name, "calll") == 0) {
         char* func_name = expr->children[0]->name;
         for (FuncEntry* f = function_table; f; f = f->next) {
@@ -92,7 +85,6 @@ char* get_expr_type(AST* expr) {
 char** get_call_arg_types(AST* call_args, int* arg_count) {
     printf("DEBUG: Extracting argument types from: %s\n", call_args->name);
     
-    // אם אין פרמטרים
     if (!call_args || (strcmp(call_args->name, "par") == 0 && 
                      call_args->child_count == 1 && 
                      strcmp(call_args->children[0]->name, "NONE") == 0)) {
@@ -101,7 +93,6 @@ char** get_call_arg_types(AST* call_args, int* arg_count) {
         return NULL;
     }
     
-    // אם זה פרמטר בודד (לא par)
     if (strcmp(call_args->name, "par") != 0) {
         printf("DEBUG: Found single argument (not par)\n");
         *arg_count = 1;
@@ -111,14 +102,11 @@ char** get_call_arg_types(AST* call_args, int* arg_count) {
         return types;
     }
     
-    // כעת יש לנו מבנה par
-    // בדיקת המבנה: אם יש שני ילדים, אז יש לנו שני פרמטרים
     if (call_args->child_count == 2) {
         printf("DEBUG: Found par node with 2 children - likely 2 params\n");
         *arg_count = 2;
         char** types = malloc(sizeof(char*) * 2);
         
-        // הילד הראשון והשני הם הפרמטרים
         types[0] = strdup(get_expr_type(call_args->children[0]));
         types[1] = strdup(get_expr_type(call_args->children[1]));
         
@@ -126,20 +114,15 @@ char** get_call_arg_types(AST* call_args, int* arg_count) {
         return types;
     }
     
-    // מקרה כללי - צריך לרקורסיבית לנתח את מבנה ה-par
-    // ספירת הפרמטרים
     int count = 1; // לפחות פרמטר אחד
     AST* current = call_args;
     
-    // אם יש לנו מבנה מורכב של par, נצטרך למצוא את כל הפרמטרים
     if (current->child_count >= 2 && strcmp(current->children[0]->name, "par") == 0) {
         count = 0;
         
-        // עובר על כל שרשרת ה-par
         while (current) {
             count++; // הפרמטר האחרון בכל רמה
             
-            // אם הילד הראשון הוא par, המשך לעבור עליו
             if (current->child_count >= 2 && strcmp(current->children[0]->name, "par") == 0) {
                 current = current->children[0];
             } else {
@@ -151,17 +134,13 @@ char** get_call_arg_types(AST* call_args, int* arg_count) {
     printf("DEBUG: Found total of %d arguments\n", count);
     *arg_count = count;
     
-    // הקצאת זיכרון למערך הטיפוסים
     char** types = malloc(sizeof(char*) * count);
     
-    // מילוי הטיפוסים
     current = call_args;
     for (int i = count - 1; i >= 0; i--) {
         if (i == count - 1) {
-            // הפרמטר האחרון הוא הילד האחרון של ה-par הנוכחי
             types[i] = strdup(get_expr_type(current->children[current->child_count - 1]));
         } else {
-            // פרמטרים אחרים הם הילדים השניים של שרשרת ה-par
             types[i] = strdup(get_expr_type(current->children[1]));
             current = current->children[0];
         }
@@ -172,7 +151,10 @@ char** get_call_arg_types(AST* call_args, int* arg_count) {
     return types;
 }
 
-void begin_function_scope() {
+void begin_function_scope(const char* function_name) {
+    strncpy(current_function_name, function_name, sizeof(current_function_name) - 1);
+    current_function_name[sizeof(current_function_name) - 1] = '\0'; 
+    
     begin_scope();
     function_start_scope = scope_depth - 1;
     printf("DEBUG: Function scope starts at %d\n", function_start_scope);
@@ -241,7 +223,6 @@ int check_variable_usage(const char* name) {
     printf("DEBUG: Checking variable '%s' from scope %d-%d\n", 
             name, function_start_scope, scope_depth - 1);
     
-    // בדוק רק סקופים מהפונקציה הנוכחית ומעלה
     for (int i = scope_depth - 1; i >= function_start_scope; i--) {
         for (VarEntry* v = scopes[i]->vars; v; v = v->next) {
             if (strcmp(v->name, name) == 0) {
@@ -251,7 +232,6 @@ int check_variable_usage(const char* name) {
         }
     }
     
-    // בדיקה גם בסקופ הגלובלי (0) - זה עבור משתנים גלובליים
     if (function_start_scope > 0) {
         for (VarEntry* v = scopes[0]->vars; v; v = v->next) {
             if (strcmp(v->name, name) == 0) {
@@ -266,7 +246,6 @@ int check_variable_usage(const char* name) {
 }
 
 int insert_function(const char* name, const char* return_type, char** param_types, int param_count, AST* body) {
-    // אם זה סקופ מקומי, בדק רק התנגשויות בסקופ הנוכחי
     if (scope_depth > 1) {
         Scope* current_scope = scopes[scope_depth - 1];
         for (LocalFuncEntry* lf = current_scope->local_funcs; lf; lf = lf->next) {
@@ -276,7 +255,6 @@ int insert_function(const char* name, const char* return_type, char** param_type
             }
         }
     } else {
-        // אם זה סקופ גלובלי, בדק התנגשויות בטבלה הגלובלית
         for (FuncEntry* f = function_table; f; f = f->next) {
             if (strcmp(f->name, name) == 0) {
                 fprintf(stderr, "Semantic Error: Function '%s' redeclared\n", name);
@@ -291,32 +269,25 @@ int insert_function(const char* name, const char* return_type, char** param_type
     new_func->param_count = param_count;
     new_func->body = body;
     
-    // בדיקה האם יש פרמטרים בכלל
     if (param_count > 0) {
         new_func->param_types = malloc(sizeof(char*) * param_count);
         
-        // בדיקה האם param_types הוא NULL
         if (param_types != NULL) {
-            // אם param_types תקין, העתק את הטיפוסים
             for (int i = 0; i < param_count; i++) {
                 new_func->param_types[i] = strdup(param_types[i]);
             }
         } else {
-            // אם param_types הוא NULL, השתמש בערך ברירת מחדל "int" לכל הפרמטרים
             for (int i = 0; i < param_count; i++) {
                 new_func->param_types[i] = strdup("int");
             }
         }
     } else {
-        // אם אין פרמטרים, אפס את המצביע
         new_func->param_types = NULL;
     }
     
-    // שמור תמיד בטבלה הגלובלית (כדי ש-check_main_signature תמצא את _main_)
     new_func->next = function_table;
     function_table = new_func;
     
-    // אם זה פונקציה מקומית, שמור גם ברשימה המקומית
     if (scope_depth > 1) {
         Scope* current_scope = scopes[scope_depth - 1];
         LocalFuncEntry* local_entry = malloc(sizeof(LocalFuncEntry));
@@ -335,14 +306,12 @@ int check_function_call(const char* name, char** arg_types, int arg_count) {
         if (strcmp(f->name, name) == 0) {
             printf("DEBUG: Found function '%s' in table with %d parameters\n", name, f->param_count);
             
-            // בדיקת מספר פרמטרים (סעיף 7)
             if (f->param_count != arg_count) {
                 fprintf(stderr, "Semantic Error: Function '%s' called with wrong number of arguments (%d), expected %d\n", 
                         name, arg_count, f->param_count);
                 return 0;
             }
             
-            // בדיקת טיפוסי פרמטרים (סעיף 8)
             for (int i = 0; i < arg_count; i++) {
                 printf("DEBUG: Checking parameter %d: expected '%s', got '%s'\n", 
                        i, f->param_types[i], arg_types[i]);
@@ -371,7 +340,6 @@ int check_main_signature() {
                 return 0;
             }
             
-            // בדיקה נוספת - האם יש return בתוך הפונקציה
             if (f->body && is_return_stmt_in_main(f->body)) {
                 fprintf(stderr, "Semantic Error: '_main_' function must not have return statement\n");
                 return 0;
@@ -443,3 +411,65 @@ int is_return_stmt_in_main(AST* function_body) {
     }
     return 0;
 }
+
+int check_return_type(const char* func_name, const char* return_type) {
+    for (FuncEntry* f = function_table; f; f = f->next) {
+        if (strcmp(f->name, func_name) == 0) {
+            if (strcmp(f->return_type, return_type) != 0) {
+                fprintf(stderr, "Semantic Error: Return type mismatch in function '%s'. Expected '%s', got '%s'\n",
+                        func_name, f->return_type, return_type);
+                return 0;
+            }
+            
+            if (strcmp(f->return_type, "string") == 0) {
+                fprintf(stderr, "Semantic Error: Function '%s' cannot return string type\n", func_name);
+                return 0;
+            }
+            
+            return 1;
+        }
+    }
+    
+    fprintf(stderr, "Semantic Error: Function '%s' not found\n", func_name);
+    return 0;
+}
+
+FuncEntry* get_function_by_name(const char* name) {
+    for (FuncEntry* f = function_table; f; f = f->next) {
+        if (strcmp(f->name, name) == 0) {
+            return f;
+        }
+    }
+    return NULL;
+}
+
+VarEntry* find_var(const char* name) {
+    for (int i = scope_depth - 1; i >= function_start_scope; i--) {
+        for (VarEntry* v = scopes[i]->vars; v; v = v->next) {
+            if (strcmp(v->name, name) == 0) {
+                return v;
+            }
+        }
+    }
+    if (function_start_scope > 0) {
+        for (VarEntry* v = scopes[0]->vars; v; v = v->next) {
+            if (strcmp(v->name, name) == 0) {
+                return v;
+            }
+        }
+    }
+    return NULL;
+}
+
+char* get_variable_type(const char* var_name) {
+    VarEntry* var = find_var(var_name);
+    if (var) {
+        return var->type;
+    }
+    return "unknown";
+}
+
+
+
+
+
