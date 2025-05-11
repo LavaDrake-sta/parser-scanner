@@ -1,10 +1,15 @@
+def test(int:param1, real:param2):int
+begin
+  return param1;
+end
+
 def _main_():
 begin
   var
-    int:a:5;
+    int:i:5;
     real:r:2.5;
-    string:str:"Hello";
-    
-  a = r;     
-  str[0] = a; 
+  
+  i = call test(i, r);
+  
+  i = call test(r, i);
 end

@@ -20,7 +20,7 @@
             params->child_count > 0 && 
             strcmp(params->children[0]->name, "NONE") == 0)
             return 0;
-        return 1; // יש לפחות פרמטר אחד
+        return 1; 
     }
 
 %}
@@ -480,7 +480,6 @@ do_while_stmt:
 for_stmt:
     FOR LPAREN assignment expr SEMICOLON expr RPAREN COLON stmt
     {
-        // בדיקה שהתנאי (הביטוי השני) הוא מטיפוס bool
         char* cond_type = get_expr_type($4);
         if (strcmp(cond_type, "bool") != 0) {
             fprintf(stderr, "Semantic Error: Condition in for loop must be of type bool, got %s\n", cond_type);
@@ -491,7 +490,6 @@ for_stmt:
     }
     | FOR LPAREN assignment expr SEMICOLON expr RPAREN COLON block
     {
-        // בדיקה שהתנאי (הביטוי השני) הוא מטיפוס bool
         char* cond_type = get_expr_type($4);
         if (strcmp(cond_type, "bool") != 0) {
             fprintf(stderr, "Semantic Error: Condition in for loop must be of type bool, got %s\n", cond_type);
@@ -560,60 +558,303 @@ id:
 ;
 
 expr:
-    expr PLUS expr   { $$ = make_node("+", 2, $1, $3); }
-  | expr MINUS expr  { $$ = make_node("-", 2, $1, $3); }
-  | expr MULT expr   { $$ = make_node("*", 2, $1, $3); }
-  | expr DIV expr    { $$ = make_node("/", 2, $1, $3); }
-  | expr EQ expr     { $$ = make_node("==", 2, $1, $3); }
-  | expr NE expr     { $$ = make_node("!=", 2, $1, $3); }
-  | expr LT expr     { $$ = make_node("<", 2, $1, $3); }
-  | expr GT expr     { $$ = make_node(">", 2, $1, $3); }
-  | expr LE expr     { $$ = make_node("<=", 2, $1, $3); }
-  | expr GE expr     { $$ = make_node(">=", 2, $1, $3); }
-  | expr AND expr    { $$ = make_node("AND", 2, $1, $3); }
-  | expr OR expr     { $$ = make_node("OR", 2, $1, $3); }
-  | NOT expr         { $$ = make_node("NOT", 1, $2); }
-  | LPAREN expr RPAREN { $$ = $2; }
-  | LBRACK expr RBRACK   { $$ = $2; }
-  | REAL { $$ = make_node($1, 0); }
-  | NUM             { $$ = make_node($1, 0); }
-  | id              { $$ = $1; } 
-  | CHAR_LITERAL    { $$ = make_node($1, 0); }
-  | STRING_LITERAL  { $$ = make_node($1,0); }
-  | NULLPTR         { $$ = make_node("nullptr",0);}
-  | TRUE            { $$ = make_node("TRUE",0);}
-  | FALSE           { $$ = make_node("FALSE",0);}
-  | CALL ID LPAREN call_args RPAREN { 
-        int arg_count;
-        char** arg_types = get_call_arg_types($4, &arg_count);
+expr PLUS expr 
+    {
+        char* left_type = get_expr_type($1);
+        char* right_type = get_expr_type($3);
         
-        if (!check_function_call($2, arg_types, arg_count)) {
-            for (int i = 0; i < arg_count; i++) {
-                free(arg_types[i]);
-            }
-            free(arg_types);
+        if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
+            (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
+            fprintf(stderr, "Semantic Error: Arithmetic operator '+' requires int or real operands\n");
             YYABORT;
         }
+        
+        $$ = make_node("+", 2, $1, $3);
+    }
+| expr MINUS expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
+        (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
+        fprintf(stderr, "Semantic Error: Arithmetic operator '-' requires int or real operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("-", 2, $1, $3);
+  }
+| expr MULT expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
+        (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
+        fprintf(stderr, "Semantic Error: Arithmetic operator '*' requires int or real operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("*", 2, $1, $3);
+  }
+| expr DIV expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
+        (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
+        fprintf(stderr, "Semantic Error: Arithmetic operator '/' requires int or real operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("/", 2, $1, $3);
+  }
+| expr EQ expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if (strcmp(left_type, right_type) != 0) {
+        fprintf(stderr, "Semantic Error: Equality operator '==' requires operands of the same type, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("==", 2, $1, $3);
+  }
+| expr NE expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if (strcmp(left_type, right_type) != 0) {
+        fprintf(stderr, "Semantic Error: Inequality operator '!=' requires operands of the same type, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("!=", 2, $1, $3);
+  }
+| expr LT expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
+        (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
+        fprintf(stderr, "Semantic Error: Comparison operator '<' requires numeric operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("<", 2, $1, $3);
+  }
+| expr GT expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
+        (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
+        fprintf(stderr, "Semantic Error: Comparison operator '>' requires numeric operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node(">", 2, $1, $3);
+  }
+| expr LE expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
+        (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
+        fprintf(stderr, "Semantic Error: Comparison operator '<=' requires numeric operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("<=", 2, $1, $3);
+  }
+| expr GE expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
+        (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
+        fprintf(stderr, "Semantic Error: Comparison operator '>=' requires numeric operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node(">=", 2, $1, $3);
+  }
+| expr AND expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if (strcmp(left_type, "bool") != 0 || strcmp(right_type, "bool") != 0) {
+        fprintf(stderr, "Semantic Error: Logical operator 'AND' requires boolean operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("AND", 2, $1, $3);
+  }
+| expr OR expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if (strcmp(left_type, "bool") != 0 || strcmp(right_type, "bool") != 0) {
+        fprintf(stderr, "Semantic Error: Logical operator 'OR' requires boolean operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("OR", 2, $1, $3);
+  }
+| NOT expr 
+  {
+    char* operand_type = get_expr_type($2);
+    
+    if (strcmp(operand_type, "bool") != 0) {
+        fprintf(stderr, "Semantic Error: Logical NOT operator requires a boolean operand, got %s\n",
+                operand_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("NOT", 1, $2);
+  }
+| ADDRESS id 
+  {
+    char* var_type = get_variable_type($2->name);
+    
+    // בדיקה שהמשתנה הוא מהטיפוסים המותרים לאופרטור & (סעיף 16)
+    if (strcmp(var_type, "int") != 0 && 
+        strcmp(var_type, "real") != 0 && 
+        strcmp(var_type, "char") != 0) {
+        
+        // בדיקה אם זה אינדקס של מחרוזת
+        if (!($2->child_count == 2 && strcmp($2->name, "INDEX") == 0)) {
+            fprintf(stderr, "Semantic Error: Address operator '&' can only be applied to variables of type int, real, char, or string index\n");
+            YYABORT;
+        }
+    }
+    
+    $$ = make_node("&", 1, $2);
+  }
+| MULT expr 
+  {
+    char* expr_type = get_expr_type($2);
+    
+    // בדיקה אם הטיפוס הוא מצביע (סעיף 17)
+    if (strstr(expr_type, "*") == NULL) {
+        fprintf(stderr, "Semantic Error: Dereference operator '*' can only be applied to pointers, got %s\n", expr_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("DEREF", 1, $2);
+  }
+| expr ADDRESS ADDRESS expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($4);
+    
+    if (strcmp(left_type, "bool") != 0 || strcmp(right_type, "bool") != 0) {
+        fprintf(stderr, "Semantic Error: Logical operator '&&' requires boolean operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("AND", 2, $1, $4);
+  }
+| expr BAR BAR expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($4);
+    
+    if (strcmp(left_type, "bool") != 0 || strcmp(right_type, "bool") != 0) {
+        fprintf(stderr, "Semantic Error: Logical operator '||' requires boolean operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("OR", 2, $1, $4);
+  }
+| '!' expr 
+  {
+    char* operand_type = get_expr_type($2);
+    
+    if (strcmp(operand_type, "bool") != 0) {
+        fprintf(stderr, "Semantic Error: Logical NOT operator requires a boolean operand, got %s\n",
+                operand_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("NOT", 1, $2);
+  }
+| BAR expr BAR 
+  {
+    char* operand_type = get_expr_type($2);
+    
+    if (strcmp(operand_type, "string") != 0) {
+        fprintf(stderr, "Semantic Error: Absolute value operator '|' can only be applied to strings, got %s\n",
+                operand_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("ABS", 1, $2);
+  }
+| LPAREN expr RPAREN { $$ = $2; }
+| LBRACK expr RBRACK { $$ = $2; }
+| REAL { $$ = make_node($1, 0); }
+| NUM { $$ = make_node($1, 0); }
+| id { $$ = $1; }
+| CHAR_LITERAL { $$ = make_node($1, 0); }
+| STRING_LITERAL { $$ = make_node($1, 0); }
+| NULLPTR { $$ = make_node("nullptr", 0); }
+| TRUE { $$ = make_node("TRUE", 0); }
+| FALSE { $$ = make_node("FALSE", 0); }
+| CALL ID LPAREN call_args RPAREN {
+    int arg_count;
+    char** arg_types = get_call_arg_types($4, &arg_count);
+    if (!check_function_call($2, arg_types, arg_count)) {
         for (int i = 0; i < arg_count; i++) {
             free(arg_types[i]);
         }
         free(arg_types);
-        $$ = make_node("calll", 2, make_node($2, 0), $4);
+        YYABORT;
     }
-    | ID LBRACK expr RBRACK
-    {
-        char* var_type = get_variable_type($1);
-        if (strcmp(var_type, "string") != 0) {
-            fprintf(stderr, "Semantic Error: Array indexing operator [] can only be used with string type, got %s\n", var_type);
-            YYABORT;
-        }
-        char* index_type = get_expr_type($3);
-        if (strcmp(index_type, "int") != 0) {
-            fprintf(stderr, "Semantic Error: Array index must be of type int, got %s\n", index_type);
-            YYABORT;
-        }
-        $$ = make_node("INDEX", 2, make_node($1, 0), $3);
+    for (int i = 0; i < arg_count; i++) {
+        free(arg_types[i]);
     }
+    free(arg_types);
+    $$ = make_node("calll", 2, make_node($2, 0), $4);
+  }
+| ID LBRACK expr RBRACK
+  {
+    char* var_type = get_variable_type($1);
+    if (strcmp(var_type, "string") != 0) {
+        fprintf(stderr, "Semantic Error: Array indexing operator [] can only be used with string type, got %s\n", var_type);
+        YYABORT;
+    }
+    
+    char* index_type = get_expr_type($3);
+    if (strcmp(index_type, "int") != 0) {
+        fprintf(stderr, "Semantic Error: Array index must be of type int, got %s\n", index_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("INDEX", 2, make_node($1, 0), $3);
+  }
 ;
 
 %%

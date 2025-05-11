@@ -55,6 +55,13 @@ char* get_expr_type(AST* expr) {
         char* left_type = get_expr_type(expr->children[0]);
         char* right_type = get_expr_type(expr->children[1]);
         
+        if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
+            (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
+            fprintf(stderr, "Semantic Error: Arithmetic operator '%s' requires int or real operands, got %s and %s\n",
+                    expr->name, left_type, right_type);
+            return "error";
+        }
+        
         if (strcmp(left_type, "real") == 0 || strcmp(right_type, "real") == 0) {
             return "real";
         } else {
@@ -62,12 +69,105 @@ char* get_expr_type(AST* expr) {
         }
     }
     
-    if (strcmp(expr->name, "==") == 0 || strcmp(expr->name, "!=") == 0 ||
-        strcmp(expr->name, "<") == 0 || strcmp(expr->name, ">") == 0 ||
-        strcmp(expr->name, "<=") == 0 || strcmp(expr->name, ">=") == 0 ||
-        strcmp(expr->name, "AND") == 0 || strcmp(expr->name, "OR") == 0 ||
-        strcmp(expr->name, "NOT") == 0) {
+    if (strcmp(expr->name, "AND") == 0 || strcmp(expr->name, "OR") == 0) {
+        char* left_type = get_expr_type(expr->children[0]);
+        char* right_type = get_expr_type(expr->children[1]);
+        
+        if (strcmp(left_type, "bool") != 0 || strcmp(right_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Logical operator '%s' requires boolean operands, got %s and %s\n",
+                    expr->name, left_type, right_type);
+            return "error";
+        }
+        
         return "bool";
+    }
+    
+    if (strcmp(expr->name, "<") == 0 || strcmp(expr->name, ">") == 0 ||
+        strcmp(expr->name, "<=") == 0 || strcmp(expr->name, ">=") == 0) {
+        char* left_type = get_expr_type(expr->children[0]);
+        char* right_type = get_expr_type(expr->children[1]);
+        
+        if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
+            (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
+            fprintf(stderr, "Semantic Error: Comparison operator '%s' requires numeric operands, got %s and %s\n",
+                    expr->name, left_type, right_type);
+            return "error";
+        }
+        
+        return "bool";
+    }
+    
+    if (strcmp(expr->name, "==") == 0 || strcmp(expr->name, "!=") == 0) {
+        char* left_type = get_expr_type(expr->children[0]);
+        char* right_type = get_expr_type(expr->children[1]);
+        
+        if (strcmp(left_type, right_type) != 0) {
+            fprintf(stderr, "Semantic Error: Equality operator '%s' requires operands of the same type, got %s and %s\n",
+                    expr->name, left_type, right_type);
+            return "error";
+        }
+        
+        return "bool";
+    }
+    
+    if (strcmp(expr->name, "ABS") == 0) {  
+        char* operand_type = get_expr_type(expr->children[0]);
+        
+        if (strcmp(operand_type, "string") != 0) {
+            fprintf(stderr, "Semantic Error: Absolute value operator '||' can only be applied to strings, got %s\n",
+                    operand_type);
+            return "error";
+        }
+        
+        return "int";
+    }
+    
+    if (strcmp(expr->name, "NOT") == 0) {
+        char* operand_type = get_expr_type(expr->children[0]);
+        
+        if (strcmp(operand_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Logical NOT operator '!' can only be applied to boolean values, got %s\n",
+                    operand_type);
+            return "error";
+        }
+        
+        return "bool";
+    }
+    
+    if (strcmp(expr->name, "&") == 0) {
+        char* operand_type = get_expr_type(expr->children[0]);
+        
+        if (expr->children[0]->child_count > 0 && strcmp(expr->children[0]->name, "INDEX") == 0) {
+            return "char*";
+        }
+        
+        if (strcmp(operand_type, "int") != 0 && 
+            strcmp(operand_type, "real") != 0 && 
+            strcmp(operand_type, "char") != 0) {
+            fprintf(stderr, "Semantic Error: Address operator '&' can only be applied to variables of type int, real, char, or string index, got %s\n",
+                    operand_type);
+            return "error";
+        }
+        
+        char* ptr_type = malloc(strlen(operand_type) + 2);
+        strcpy(ptr_type, operand_type);
+        strcat(ptr_type, "*");
+        return ptr_type;
+    }
+    
+    if (strcmp(expr->name, "DEREF") == 0) {
+        char* operand_type = get_expr_type(expr->children[0]);
+        
+        if (strchr(operand_type, '*') == NULL) {
+            fprintf(stderr, "Semantic Error: Dereference operator '*' can only be applied to pointers, got %s\n",
+                    operand_type);
+            return "error";
+        }
+        
+        char* base_type = malloc(strlen(operand_type));
+        strncpy(base_type, operand_type, strlen(operand_type) - 1);
+        base_type[strlen(operand_type) - 1] = '\0';
+        return base_type;
     }
     
     if (strcmp(expr->name, "calll") == 0) {
@@ -77,6 +177,10 @@ char* get_expr_type(AST* expr) {
                 return f->return_type;
             }
         }
+    }
+    
+    if (strcmp(expr->name, "INDEX") == 0) {
+        return "char";
     }
     
     return "unknown";
@@ -114,14 +218,14 @@ char** get_call_arg_types(AST* call_args, int* arg_count) {
         return types;
     }
     
-    int count = 1; // לפחות פרמטר אחד
+    int count = 1;
     AST* current = call_args;
     
     if (current->child_count >= 2 && strcmp(current->children[0]->name, "par") == 0) {
         count = 0;
         
         while (current) {
-            count++; // הפרמטר האחרון בכל רמה
+            count++; 
             
             if (current->child_count >= 2 && strcmp(current->children[0]->name, "par") == 0) {
                 current = current->children[0];
@@ -137,12 +241,27 @@ char** get_call_arg_types(AST* call_args, int* arg_count) {
     char** types = malloc(sizeof(char*) * count);
     
     current = call_args;
-    for (int i = count - 1; i >= 0; i--) {
-        if (i == count - 1) {
-            types[i] = strdup(get_expr_type(current->children[current->child_count - 1]));
+    for (int i = 0; i < count; i++) {  
+        if (i == 0) {
+            if (current->child_count == 2 && strcmp(current->children[0]->name, "par") == 0) {
+                AST* first_param = current;
+                while (first_param->child_count >= 2 && strcmp(first_param->children[0]->name, "par") == 0) {
+                    first_param = first_param->children[0];
+                }
+                types[i] = strdup(get_expr_type(first_param->children[first_param->child_count-1]));
+            } else {
+                types[i] = strdup(get_expr_type(current->children[current->child_count-1]));
+            }
         } else {
-            types[i] = strdup(get_expr_type(current->children[1]));
-            current = current->children[0];
+          
+            int param_index = count - i - 1;  
+            AST* param_node = call_args;
+            for (int j = 0; j < param_index; j++) {
+                if (param_node->child_count >= 2 && strcmp(param_node->children[0]->name, "par") == 0) {
+                    param_node = param_node->children[0];
+                }
+            }
+            types[i] = strdup(get_expr_type(param_node->children[1]));
         }
         
         printf("DEBUG: Argument %d type: %s\n", i, types[i]);
@@ -307,17 +426,17 @@ int check_function_call(const char* name, char** arg_types, int arg_count) {
             printf("DEBUG: Found function '%s' in table with %d parameters\n", name, f->param_count);
             
             if (f->param_count != arg_count) {
-                fprintf(stderr, "Semantic Error: Function '%s' called with wrong number of arguments (%d), expected %d\n", 
+                fprintf(stderr, "Semantic Error: Function '%s' called with wrong number of arguments (%d), expected %d\n",
                         name, arg_count, f->param_count);
                 return 0;
             }
             
             for (int i = 0; i < arg_count; i++) {
-                printf("DEBUG: Checking parameter %d: expected '%s', got '%s'\n", 
+                printf("DEBUG: Checking parameter %d: expected '%s', got '%s'\n",
                        i, f->param_types[i], arg_types[i]);
                 
                 if (strcmp(f->param_types[i], arg_types[i]) != 0) {
-                    fprintf(stderr, "Semantic Error: Argument %d type mismatch in call to '%s', expected '%s', got '%s'\n", 
+                    fprintf(stderr, "Semantic Error: Parameter %d type mismatch in call to '%s', expected '%s', got '%s'. Parameters must be in correct order.\n",
                             i + 1, name, f->param_types[i], arg_types[i]);
                     return 0;
                 }
