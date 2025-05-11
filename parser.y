@@ -14,14 +14,31 @@
     int yylex();
     int yydebug = 1;
 
-    int has_params(AST* params) {
-        if (!params) return 0;
-        if (strcmp(params->name, "PARS") == 0 && 
-            params->child_count > 0 && 
-            strcmp(params->children[0]->name, "NONE") == 0)
-            return 0;
+int has_params(AST* params) {
+
+    if (!params) return 0;
+    if (strcmp(params->name, "PARS") == 0 && 
+        params->child_count > 0 && 
+        strcmp(params->children[0]->name, "NONE") == 0)
+        return 0;
+
+    if (strcmp(params->name, "PARS") == 0 && 
+        params->child_count > 0) {
+        
+        AST* child = params->children[0];
+        if (strcmp(child->name, "PLIST") == 0) {
+            int count = 1;
+            while (strcmp(child->name, "PLIST") == 0 && child->child_count == 2) {
+                count++;
+                child = child->children[0];
+            }
+            return count;
+        }
         return 1; 
     }
+    
+    return 1; 
+}
 
 %}
 
@@ -73,7 +90,6 @@ function_list:
 function:
  /* WITH params AND RETURNS */
 DEF ID LPAREN param_list RPAREN COLON RETURNS type T_BEGIN {
-    // בדיקה שטיפוס ההחזרה אינו string (סעיף 9)
     if (strcmp($8->name, "string") == 0) {
         fprintf(stderr, "Semantic Error: Function '%s' cannot have string as return type\n", $2);
         YYABORT;
@@ -88,12 +104,14 @@ DEF ID LPAREN param_list RPAREN COLON RETURNS type T_BEGIN {
         make_node("RET", 1, $8),
         make_node("BODY", 1, $11));
     
-    if (!insert_function($2, $8->name, NULL, 1, $11)) {
+    int param_count = has_params($4);
+    if (!insert_function($2, $8->name, NULL, param_count, $11)) {
         YYABORT;
     }
     end_scope();
     reset_function_scope();
 }
+
 /* WITHOUT params BUT WITH RETURNS */
 | DEF ID LPAREN RPAREN COLON RETURNS type T_BEGIN {
     if (strcmp($7->name, "string") == 0) {
@@ -171,6 +189,12 @@ param_list_item_list:
 param_list_item:
     ID type COLON ID {
         printf("param_list_item matched: %s : %s\n", $1, $4);
+        
+        if (!insert_variable($1, $2->name)) {
+            yyerror("Semantic Error: Parameter already declared");
+            YYABORT;
+        }
+        
         $$ = make_node("par", 3, make_node($1, 0), make_node($2->name, 0), make_node($4, 0));
     }
 ;
@@ -733,23 +757,40 @@ expr PLUS expr
     
     $$ = make_node("NOT", 1, $2);
   }
-| ADDRESS id 
+| ADDRESS ID LBRACK expr RBRACK
   {
-    char* var_type = get_variable_type($2->name);
+    char* var_type = get_variable_type($2);
+    if (strcmp(var_type, "string") != 0) {
+        fprintf(stderr, "Semantic Error: Address operator '&' can only be applied to string index, got %s\n", var_type);
+        YYABORT;
+    }
+    
+    char* index_type = get_expr_type($4);
+    if (strcmp(index_type, "int") != 0) {
+        fprintf(stderr, "Semantic Error: Array index must be of type int, got %s\n", index_type);
+        YYABORT;
+    }
+    
+    AST* index_node = make_node("INDEX", 2, make_node($2, 0), $4);
+    $$ = make_node("&", 1, index_node);
+  }
+| ADDRESS ID
+  {
+    if (!check_variable_usage($2)) {
+        YYABORT;
+    }
+    
+    char* var_type = get_variable_type($2);
     
     // בדיקה שהמשתנה הוא מהטיפוסים המותרים לאופרטור & (סעיף 16)
     if (strcmp(var_type, "int") != 0 && 
         strcmp(var_type, "real") != 0 && 
         strcmp(var_type, "char") != 0) {
-        
-        // בדיקה אם זה אינדקס של מחרוזת
-        if (!($2->child_count == 2 && strcmp($2->name, "INDEX") == 0)) {
-            fprintf(stderr, "Semantic Error: Address operator '&' can only be applied to variables of type int, real, char, or string index\n");
-            YYABORT;
-        }
+        fprintf(stderr, "Semantic Error: Address operator '&' can only be applied to variables of type int, real, char, or string index\n");
+        YYABORT;
     }
     
-    $$ = make_node("&", 1, $2);
+    $$ = make_node("&", 1, make_node($2, 0));
   }
 | MULT expr 
   {

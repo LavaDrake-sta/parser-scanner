@@ -1,15 +1,9 @@
-def test(int:param1, real:param2):int
-begin
-  return param1;
-end
-
-def _main_():
+def _main_() : 
 begin
   var
-    int:i:5;
-    real:r:2.5;
+    string:str:"Hello";
+    char:p_char:' ';
+    int:i:0;
   
-  i = call test(i, r);
-  
-  i = call test(r, i);
+  p_char = &str[i];  
 end

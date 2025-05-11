@@ -36,8 +36,6 @@ INT_NUM [1-9][0-9]*|0
 "return"     { printf("[RETURN] "); return RETURN; }
 "returns"    { printf("[RETURNS] "); return RETURNS; }
 
-
-
 "int"        { printf("[TYPE_INT] "); yylval.sval = strdup(yytext); return TYPE_INT; }
 "real"       { printf("[TYPE_REAL] "); yylval.sval = strdup(yytext); return TYPE_REAL; }
 "char"       { printf("[TYPE_CHAR] "); yylval.sval = strdup(yytext); return TYPE_CHAR; }
