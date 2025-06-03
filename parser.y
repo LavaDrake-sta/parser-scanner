@@ -1,6 +1,7 @@
 %{
     #include "symbol_table.h"
     #include "ast.h"
+    #include "code_generator.h"
     #include <stdio.h>
     #include <stdlib.h>
     #include <string.h>
@@ -13,6 +14,8 @@
     extern char current_function_name[256];
     int yylex();
     int yydebug = 1;
+    AST* program_ast = NULL; 
+
 
 int has_params(AST* params) {
 
@@ -72,10 +75,14 @@ program:
     function_list {
         printf("ENTERED: program -> function_list\n");
         if (!check_main_signature()) {
-
             YYABORT;
         }
+        
+        program_ast = $1;
+        
+        printf("\n=== AST Structure ===\n");
         print_ast($1, 0);
+        printf("=== End of AST ===\n");
     }
     | error {
         yyerror("Could not parse input");
@@ -905,6 +912,21 @@ void yyerror(const char* s) {
 
 int main() {
     printf("DEBUG: Initializing symbol table\n");
-    init_symbol_table(); 
-    return yyparse();
+    init_symbol_table();
+    
+    int parse_result = yyparse();
+    
+    if (parse_result == 0) {
+        printf("\n=== AC3 Code Generation ===\n");
+        
+        CodeGenerator cg;
+        init_code_generator(&cg);
+        generate_code(&cg, program_ast);
+        
+        printf("=== End of AC3 Code ===\n");
+    } else {
+        printf("Parsing failed\n");
+    }
+    
+    return parse_result;
 }
