@@ -1,9 +1,0 @@
-def _main_() : 
-begin
-  var
-    string:str:"Hello";
-    char:p_char:' ';
-    int:i:0;
-  
-  p_char = &str[i];  
-end
