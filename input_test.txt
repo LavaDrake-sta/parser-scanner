@@ -1,0 +1,98 @@
+#-> comment Long <-#
+def  foo1(par1  int:a; par2  int:b; par3  int:c;  par4 char:c1) : returns bool
+var 
+    type bool: res;
+begin
+    var  
+        type char: x, b;
+        type int: y;
+    begin
+      b = '&';
+      #->1  a = x; <-#  
+      #->2 b = 8; <-#
+      a = (y*7)/a-y;
+      #->3 a = (y*7)/b-y; <-#
+      #->4 a = (y*7)/a-c1; <-#
+      #->5 res = (b==c) and (y>a); <-#
+      #->6 res = (b==c1) and (y+a); <-#
+      #->7 3+6 = 9; <-#
+      #->8 %x =6 ;<-#
+   end 
+   return res;
+end
+def  goo1(par1  int:i; par2  int:j; par3  int:k; par4  int:x) :  
+begin
+    def  goo2 (par1 int:l; par2 int:m; par3 int:n) : returns bool
+    var 
+          type bool: x, j;
+          #->10 type bool: n;<-#
+          type char: k;
+    begin
+          k = '@';
+          i = l + l;
+          #->11 i= j+1; <-#
+          #->12 i= k+1; <-#
+          if  (k=='*') or (x!=False) and ( l+m < i)  :
+                                                          x = l < m;
+           return x;
+    end
+    var 
+            type char: x;
+            type bool: k;
+    begin
+          k= call goo2(5,i,j);
+         #->13 x= call goo2(5,i,j); <-#
+         #->14 k = call goo2(5,i); <-#
+         #->15 k = call goo2(5,x,j); <-#
+    end
+       #->16 n= False; <-#
+       #->17 x= '#'; <-#
+       x= k;
+end
+def  foo3(par1 int:i; par2 int:j; par3 int:k ) : returns int
+var 
+      type  int: total; #-> variable declaration <-#
+      type  bool: bo;
+begin
+     def  si1(par1  int:t) : returns int  #-> function declaration <-#
+     var 
+          type  int: temp;
+      begin
+          temp= t*t;
+          return temp;
+     end
+      bo= call foo1 (i, j, k, '^');
+      #->18 j= call foo2(); <-# 
+      total=call si1(i+j+k);  #-> statemets <-#
+     return total;
+end
+def  foo2() : returns int
+var
+      type string:  s1[100], s2[100];
+      type  int: i:0, j:0, cnt;
+begin
+     cnt= 1;
+     while i < |s1|:  begin
+        while  j < |s2| / 2 : begin
+           #->19 if s1[i]  =  s2[j] :  <-#
+           begin
+               cnt=cnt*2;
+           end
+           j= j+1;
+        end
+        i= i+1;
+     end
+     return cnt;
+end
+def  _main_() : 
+var 
+    type int: x1;
+begin
+  x1 = call foo2();
+end
+ 
+
+
+  
+
+

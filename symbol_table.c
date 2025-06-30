@@ -17,6 +17,8 @@ typedef struct Scope {
     VarEntry* vars;
     LocalFuncEntry* local_funcs;  
     struct Scope* next;
+    int is_function_scope;        
+    char function_name[256];      
 } Scope;
 
 static Scope* scopes[MAX_SCOPE_DEPTH];
@@ -29,13 +31,12 @@ char* get_expr_type(AST* expr) {
     if (!expr) return "unknown";
     
     if (expr->child_count == 0) {
-        for (int i = scope_depth - 1; i >= 0; i--) {
-            for (VarEntry* v = scopes[i]->vars; v; v = v->next) {
-                if (strcmp(v->name, expr->name) == 0) {
-                    return v->type;
-                }
-            }
+        VarEntry* var = find_var(expr->name);
+        if (var) {
+            printf("DEBUG: get_expr_type('%s') found type '%s'\n", expr->name, var->type);
+            return var->type;
         }
+        printf("DEBUG: get_expr_type('%s') - var not found, checking literals\n", expr->name);
         
         if (strchr(expr->name, '.')) {
             return "real";
@@ -45,15 +46,27 @@ char* get_expr_type(AST* expr) {
             return "string";
         } else if (expr->name[0] == '\'') {
             return "char";
-        } else if (strcmp(expr->name, "TRUE") == 0 || strcmp(expr->name, "FALSE") == 0) {
+        } else if (strcmp(expr->name, "TRUE") == 0 || strcmp(expr->name, "FALSE") == 0 ||
+                strcmp(expr->name, "True") == 0 || strcmp(expr->name, "False") == 0) {
             return "bool";
         }
     }
     
+    if (strcmp(expr->name, "LENGTH") == 0) {
+        return "int";
+    }
+    
+    if (strcmp(expr->name, "ABS") == 0) {
+        return get_expr_type(expr->children[0]);
+    }
+
     if (strcmp(expr->name, "+") == 0 || strcmp(expr->name, "-") == 0 ||
         strcmp(expr->name, "*") == 0 || strcmp(expr->name, "/") == 0) {
         char* left_type = get_expr_type(expr->children[0]);
         char* right_type = get_expr_type(expr->children[1]);
+    
+        printf("DEBUG: Arithmetic operator '%s' - left_type='%s', right_type='%s'\n", 
+            expr->name, left_type, right_type);
         
         if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
             (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
@@ -206,32 +219,23 @@ char** get_call_arg_types(AST* call_args, int* arg_count) {
         return types;
     }
     
-    if (call_args->child_count == 2) {
-        printf("DEBUG: Found par node with 2 children - likely 2 params\n");
-        *arg_count = 2;
-        char** types = malloc(sizeof(char*) * 2);
-        
-        types[0] = strdup(get_expr_type(call_args->children[0]));
-        types[1] = strdup(get_expr_type(call_args->children[1]));
-        
-        printf("DEBUG: Found 2 arguments of types: %s, %s\n", types[0], types[1]);
-        return types;
-    }
+    AST* nodes[10]; 
+    int count = 0;
     
-    int count = 1;
     AST* current = call_args;
-    
-    if (current->child_count >= 2 && strcmp(current->children[0]->name, "par") == 0) {
-        count = 0;
-        
-        while (current) {
-            count++; 
-            
-            if (current->child_count >= 2 && strcmp(current->children[0]->name, "par") == 0) {
+    while (current) {
+        if (strcmp(current->name, "par") == 0) {
+            if (current->child_count == 2) {
+                nodes[count] = current->children[1];
+                count++;
                 current = current->children[0];
             } else {
                 break;
             }
+        } else {
+            nodes[count] = current;
+            count++;
+            break;
         }
     }
     
@@ -240,30 +244,8 @@ char** get_call_arg_types(AST* call_args, int* arg_count) {
     
     char** types = malloc(sizeof(char*) * count);
     
-    current = call_args;
-    for (int i = 0; i < count; i++) {  
-        if (i == 0) {
-            if (current->child_count == 2 && strcmp(current->children[0]->name, "par") == 0) {
-                AST* first_param = current;
-                while (first_param->child_count >= 2 && strcmp(first_param->children[0]->name, "par") == 0) {
-                    first_param = first_param->children[0];
-                }
-                types[i] = strdup(get_expr_type(first_param->children[first_param->child_count-1]));
-            } else {
-                types[i] = strdup(get_expr_type(current->children[current->child_count-1]));
-            }
-        } else {
-          
-            int param_index = count - i - 1;  
-            AST* param_node = call_args;
-            for (int j = 0; j < param_index; j++) {
-                if (param_node->child_count >= 2 && strcmp(param_node->children[0]->name, "par") == 0) {
-                    param_node = param_node->children[0];
-                }
-            }
-            types[i] = strdup(get_expr_type(param_node->children[1]));
-        }
-        
+    for (int i = 0; i < count; i++) {
+        types[i] = strdup(get_expr_type(nodes[count - 1 - i]));
         printf("DEBUG: Argument %d type: %s\n", i, types[i]);
     }
     
@@ -272,11 +254,25 @@ char** get_call_arg_types(AST* call_args, int* arg_count) {
 
 void begin_function_scope(const char* function_name) {
     strncpy(current_function_name, function_name, sizeof(current_function_name) - 1);
-    current_function_name[sizeof(current_function_name) - 1] = '\0'; 
+    current_function_name[sizeof(current_function_name) - 1] = '\0';
+    function_start_scope = scope_depth+1; 
     
-    begin_scope();
-    function_start_scope = scope_depth - 1;
-    printf("DEBUG: Function scope starts at %d\n", function_start_scope);
+    printf("DEBUG: Starting function '%s' at scope depth %d\n", function_name, scope_depth);
+}
+
+void end_function_scope() {
+    printf("DEBUG: Ending function scope - depth before: %d\n", scope_depth);
+    
+
+    
+    current_function_name[0] = '\0';
+    function_start_scope = 0;
+    
+    printf("DEBUG: Function scope ended - depth after: %d\n", scope_depth);
+}
+
+int get_scope_depth() {
+    return scope_depth;
 }
 
 void reset_function_scope() {
@@ -286,10 +282,9 @@ void reset_function_scope() {
 
 void init_symbol_table() {
     printf("DEBUG: Initializing symbol table\n");
-    scope_depth = 0;
+    scope_depth = 0;  
     function_table = NULL;
     memset(scopes, 0, sizeof(scopes));
-    begin_scope();
 }
 
 void begin_scope() {
@@ -300,7 +295,9 @@ void begin_scope() {
     }
     Scope* s = malloc(sizeof(Scope));
     s->vars = NULL;
-    s->local_funcs = NULL;  // חשוב מאוד!
+    s->local_funcs = NULL;
+    s->is_function_scope = 0;          
+    strcpy(s->function_name, "");      
     scopes[scope_depth++] = s;
     printf("DEBUG: Begin scope - after: depth=%d\n", scope_depth);
 }
@@ -310,6 +307,15 @@ void end_scope() {
     printf("DEBUG: End scope - before: depth=%d\n", scope_depth);
     if (scope_depth <= 0) return;
     Scope* s = scopes[--scope_depth];
+
+    VarEntry* v = s->vars;
+    while (v) {
+        VarEntry* temp = v;
+        v = v->next;
+        free(temp->name);
+        free(temp->type);
+        free(temp);
+    }
 
     LocalFuncEntry* lf = s->local_funcs;
     while (lf) {
@@ -323,38 +329,48 @@ void end_scope() {
 }
 
 int insert_variable(const char* name, const char* type) {
-    Scope* s = scopes[scope_depth - 1];
-    for (VarEntry* v = s->vars; v; v = v->next) {
-        if (strcmp(v->name, name) == 0) {
-            fprintf(stderr, "Semantic Error: Variable '%s' redeclared in same scope\n", name);
-            return 0;
-        }
+    if (!name || !type) {
+        fprintf(stderr, "Semantic Error: NULL name or type\n");
+        return 0;
     }
+    
+    if (scope_depth <= 0) {
+        fprintf(stderr, "ERROR: Trying to insert variable '%s' but no scope is active!\n", name);
+        return 0;
+    }
+    
+    Scope* s = scopes[scope_depth - 1];
+    if (!s) {
+        fprintf(stderr, "Semantic Error: NULL scope at depth %d\n", scope_depth - 1);
+        return 0;
+    }
+        
     VarEntry* new_var = malloc(sizeof(VarEntry));
+    if (!new_var) {
+        fprintf(stderr, "Error: Memory allocation failed\n");
+        return 0;
+    }
     new_var->name = strdup(name);
     new_var->type = strdup(type);
     new_var->next = s->vars;
     s->vars = new_var;
+    
+    printf("DEBUG: Successfully inserted variable '%s' of type '%s' in scope %d (shadowing allowed)\n",
+           name, type, scope_depth - 1);
+    
     return 1;
 }
 
 int check_variable_usage(const char* name) {
-    printf("DEBUG: Checking variable '%s' from scope %d-%d\n", 
-            name, function_start_scope, scope_depth - 1);
+    printf("DEBUG: Checking usage of variable '%s' in scopes %d to 0\n", name, scope_depth - 1);
     
-    for (int i = scope_depth - 1; i >= function_start_scope; i--) {
+    for (int i = scope_depth - 1; i >= 0; i--) {
+        printf("DEBUG: Searching in scope %d\n", i);
         for (VarEntry* v = scopes[i]->vars; v; v = v->next) {
+            printf("DEBUG:   Found var '%s' in scope %d\n", v->name, i);
             if (strcmp(v->name, name) == 0) {
-                printf("DEBUG: Found variable '%s' in scope %d\n", name, i);
-                return 1;
-            }
-        }
-    }
-    
-    if (function_start_scope > 0) {
-        for (VarEntry* v = scopes[0]->vars; v; v = v->next) {
-            if (strcmp(v->name, name) == 0) {
-                printf("DEBUG: Found variable '%s' in global scope\n", name);
+            fprintf(stderr, "DEBUG: Variable '%s' already exists in current scope level %d\n", name, scope_depth - 1);
+                printf("DEBUG: Variable '%s' found in scope %d\n", name, i);
                 return 1;
             }
         }
@@ -367,15 +383,19 @@ int check_variable_usage(const char* name) {
 int insert_function(const char* name, const char* return_type, char** param_types, int param_count, AST* body) {
     if (scope_depth > 1) {
         Scope* current_scope = scopes[scope_depth - 1];
-        for (LocalFuncEntry* lf = current_scope->local_funcs; lf; lf = lf->next) {
+        for (LocalFuncEntry* lf = current_scope->local_funcs; lf && lf->global_func; lf = lf->next) {
             if (strcmp(lf->global_func->name, name) == 0) {
-                fprintf(stderr, "Semantic Error: Function '%s' redeclared\n", name);
+                fprintf(stderr, "Semantic Error: Function '%s' redeclared in same scope\n", name);
                 return 0;
             }
         }
-    } else {
-        for (FuncEntry* f = function_table; f; f = f->next) {
-            if (strcmp(f->name, name) == 0) {
+    } 
+    
+    for (FuncEntry* f = function_table; f; f = f->next) {
+        if (strcmp(f->name, name) == 0) {
+            if (scope_depth > 1) {
+                printf("DEBUG: Function '%s' shadows global function\n", name);
+            } else {
                 fprintf(stderr, "Semantic Error: Function '%s' redeclared\n", name);
                 return 0;
             }
@@ -409,10 +429,19 @@ int insert_function(const char* name, const char* return_type, char** param_type
     
     if (scope_depth > 1) {
         Scope* current_scope = scopes[scope_depth - 1];
+        
+        if (current_scope->local_funcs == NULL) {
+            current_scope->local_funcs = malloc(sizeof(LocalFuncEntry));
+            current_scope->local_funcs->global_func = NULL;
+            current_scope->local_funcs->next = NULL;
+        }
+        
         LocalFuncEntry* local_entry = malloc(sizeof(LocalFuncEntry));
         local_entry->global_func = new_func;
         local_entry->next = current_scope->local_funcs;
         current_scope->local_funcs = local_entry;
+        
+        printf("DEBUG: Added nested function '%s' to scope %d\n", name, scope_depth - 1);
     }
     
     return 1;
@@ -423,7 +452,7 @@ int check_function_call(const char* name, char** arg_types, int arg_count) {
     
     for (FuncEntry* f = function_table; f; f = f->next) {
         if (strcmp(f->name, name) == 0) {
-            printf("DEBUG: Found function '%s' in table with %d parameters\n", name, f->param_count);
+            printf("DEBUG: Found global function '%s' in table with %d parameters\n", name, f->param_count);
             
             if (f->param_count != arg_count) {
                 fprintf(stderr, "Semantic Error: Function '%s' called with wrong number of arguments (%d), expected %d\n",
@@ -431,14 +460,16 @@ int check_function_call(const char* name, char** arg_types, int arg_count) {
                 return 0;
             }
             
-            for (int i = 0; i < arg_count; i++) {
-                printf("DEBUG: Checking parameter %d: expected '%s', got '%s'\n",
-                       i, f->param_types[i], arg_types[i]);
-                
-                if (strcmp(f->param_types[i], arg_types[i]) != 0) {
-                    fprintf(stderr, "Semantic Error: Parameter %d type mismatch in call to '%s', expected '%s', got '%s'. Parameters must be in correct order.\n",
-                            i + 1, name, f->param_types[i], arg_types[i]);
-                    return 0;
+            if (arg_count > 0 && f->param_types != NULL) {
+                for (int i = 0; i < arg_count; i++) {
+                    printf("DEBUG: Checking parameter %d: expected '%s', got '%s'\n",
+                        i, f->param_types[i], arg_types[i]);
+                    
+                    if (strcmp(f->param_types[i], arg_types[i]) != 0) {
+                        fprintf(stderr, "Semantic Error: Parameter %d type mismatch in call to '%s', expected '%s', got '%s'. Parameters must be in correct order.\n",
+                                i + 1, name, f->param_types[i], arg_types[i]);
+                        return 0;
+                    }
                 }
             }
             
@@ -447,10 +478,43 @@ int check_function_call(const char* name, char** arg_types, int arg_count) {
         }
     }
     
+    for (int i = scope_depth - 1; i >= 0; i--) {
+        if (scopes[i]->is_function_scope && 
+            strlen(current_function_name) > 0 &&
+            strcmp(scopes[i]->function_name, current_function_name) != 0) {
+            printf("DEBUG: Stopped searching for nested functions at function boundary\n");
+            break;
+        }
+        
+        for (LocalFuncEntry* lf = scopes[i]->local_funcs; lf && lf->global_func; lf = lf->next) {
+            if (strcmp(lf->global_func->name, name) == 0) {
+                printf("DEBUG: Found local function '%s' in scope %d\n", name, i);
+                
+                FuncEntry* f = lf->global_func;
+                if (f->param_count != arg_count) {
+                    fprintf(stderr, "Semantic Error: Function '%s' called with wrong number of arguments (%d), expected %d\n",
+                            name, arg_count, f->param_count);
+                    return 0;
+                }
+                
+                if (arg_count > 0 && f->param_types != NULL) {
+                    for (int j = 0; j < arg_count; j++) {
+                        if (strcmp(f->param_types[j], arg_types[j]) != 0) {
+                            fprintf(stderr, "Semantic Error: Parameter %d type mismatch in call to '%s', expected '%s', got '%s'\n",
+                                    j + 1, name, f->param_types[j], arg_types[j]);
+                            return 0;
+                        }
+                    }
+                }
+                
+                return 1;
+            }
+        }
+    }
+    
     fprintf(stderr, "Semantic Error: Function '%s' used before declaration\n", name);
     return 0;
 }
-
 int check_main_signature() {
     for (FuncEntry* f = function_table; f; f = f->next) {
         if (strcmp(f->name, "_main_") == 0) {
@@ -563,16 +627,10 @@ FuncEntry* get_function_by_name(const char* name) {
 }
 
 VarEntry* find_var(const char* name) {
-    for (int i = scope_depth - 1; i >= function_start_scope; i--) {
+    for (int i = scope_depth - 1; i >= 0; i--) {
         for (VarEntry* v = scopes[i]->vars; v; v = v->next) {
             if (strcmp(v->name, name) == 0) {
-                return v;
-            }
-        }
-    }
-    if (function_start_scope > 0) {
-        for (VarEntry* v = scopes[0]->vars; v; v = v->next) {
-            if (strcmp(v->name, name) == 0) {
+                fprintf(stderr, "DEBUG: Variable '%s' already exists in current scope level %d\n", name, scope_depth - 1);
                 return v;
             }
         }
@@ -588,7 +646,17 @@ char* get_variable_type(const char* var_name) {
     return "unknown";
 }
 
-
-
+int is_var_in_current_scope(const char* name) {
+    if (scope_depth <= 0) return 0;
+    
+    Scope* s = scopes[scope_depth - 1];
+    for (VarEntry* v = s->vars; v; v = v->next) {
+        if (strcmp(v->name, name) == 0) {
+            fprintf(stderr, "DEBUG: Variable '%s' already exists in current scope level %d\n", name, scope_depth - 1);
+            return 1;
+        }
+    }
+    return 0;
+}
 
 

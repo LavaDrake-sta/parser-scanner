@@ -1,24 +1,91 @@
 %{
     #include "symbol_table.h"
+    #include "three_address_code.h"
     #include "ast.h"
-    #include "code_generator.h"
     #include <stdio.h>
     #include <stdlib.h>
     #include <string.h>
     #include <ctype.h>
 
+    char** get_param_types_from_ast(AST* params, int param_count);
+    void process_var_declarations(AST* var_list);
+    void process_single_var_declaration(char* type_name, AST* var_node);
+    void process_var_decl_with_type(char* type_name, AST* var_item);
     AST* make_node(char* name, int count, ...);
     void print_ast(AST* node, int indent);
     void yyerror(const char* s);
     extern FuncEntry* get_function_by_name(const char* name);
     extern char current_function_name[256];
+    void process_declaration_list(AST* type_node, AST* decl_list);
     int yylex();
     int yydebug = 1;
-    AST* program_ast = NULL; 
+    char current_var_type[64] = "";
+    AST* ast_root = NULL; 
 
+char** get_param_types_from_ast(AST* params, int param_count) {
+    if (param_count == 0 || !params) return NULL;
+    
+    char** types = malloc(sizeof(char*) * param_count);
+    
+    AST* current = params;
+    if (strcmp(current->name, "PARS") == 0 && current->child_count > 0) {
+        current = current->children[0];
+    }
+    
+    if (param_count == 1) {
+        if (strcmp(current->name, "par") == 0 && current->child_count >= 3) {
+            types[0] = strdup(current->children[1]->name);
+        }
+    } else {
+        int index = 0;
+        while (current && strcmp(current->name, "PLIST") == 0 && current->child_count == 2) {
+            AST* param = current->children[1];
+            if (strcmp(param->name, "par") == 0 && param->child_count >= 3) {
+                types[param_count - 1 - index] = strdup(param->children[1]->name);
+            }
+            index++;
+            current = current->children[0];
+        }
+        
+        if (current && strcmp(current->name, "par") == 0 && current->child_count >= 3) {
+            types[param_count - 1 - index] = strdup(current->children[1]->name);
+        }
+    }
+    
+    return types;
+}
+
+void process_var_declarations(AST* var_list) {
+    if (!var_list || strcmp(var_list->name, "EMPTY") == 0) return;
+    
+    printf("DEBUG: Processing VAR declarations\n");
+    
+    if (strcmp(var_list->name, "VAR-LIST") == 0) {
+        for (int i = 0; i < var_list->child_count; i++) {
+            process_var_declarations(var_list->children[i]);
+        }
+    }
+    else if (strcmp(var_list->name, "VAR-DECLS") == 0) {
+        for (int i = 0; i < var_list->child_count; i++) {
+            process_var_declarations(var_list->children[i]);
+        }
+    }
+    else if (strcmp(var_list->name, "DECL") == 0) {
+        if (var_list->child_count >= 2) {
+            char* type_name = var_list->children[0]->name;
+            AST* var_node = var_list->children[1];
+            
+            printf("DEBUG: Processing DECL with type %s\n", type_name);
+
+        }
+    }
+}
+
+void process_single_var_declaration(char* type_name, AST* var_node) {
+    return;
+}
 
 int has_params(AST* params) {
-
     if (!params) return 0;
     if (strcmp(params->name, "PARS") == 0 && 
         params->child_count > 0 && 
@@ -43,6 +110,14 @@ int has_params(AST* params) {
     return 1; 
 }
 
+void process_var_decl_with_type(char* type_name, AST* var_item) {
+     return;
+}
+
+void process_declaration_list(AST* type_node, AST* decl_list) {
+    return;
+}
+
 %}
 
 %union {
@@ -51,38 +126,39 @@ int has_params(AST* params) {
 }
 
 %start program
+%left OR
+%left AND
+%left EQ NE
+%left GT GE LT LE
 %left PLUS MINUS
-%left MULT DIV
-%left EQ NE GT GE LT LE
+%left MULT DIV MOD
+%right NOT
 
 %token <sval> ID CHAR_LITERAL STRING_LITERAL NUM REAL
 %token <sval> TYPE_INT TYPE_CHAR TYPE_REAL TYPE_BOOL TYPE_STRING TYPE_INT_PTR TYPE_CHAR_PTR TYPE_REAL_PTR
 
+%token TYPE
 %token DEF T_BEGIN T_END IF ELSE ELIF WHILE FOR DO CALL RETURN RETURNS VAR NULLPTR 
-%token TRUE FALSE AND OR NOT
+%token TRUE FALSE AND OR NOT 
 
 %token EQ NE GT GE LT LE ASSIGN
-%token PLUS MINUS MULT DIV ADDRESS
+%token PLUS MINUS MULT DIV MOD ADDRESS 
 
 %token COLON SEMICOLON COMMA LPAREN RPAREN LBRACK RBRACK BAR
 
-%type <ast> program function function_list param_list param_list_item param_list_item_list elif_list call_list var_decl_list var_assign_list
-%type <ast> type stmt_list stmt assignment expr if_stmt block return_stmt while_stmt do_while_stmt for_stmt var_stmt call_args void_call assignment_call var_assign var_decl id
-
+%type <ast> program function function_list param_list param_list_item param_list_item_list elif_list call_list var_decl_list
+%type <ast> type var_stmt_list_opt par_list_opt nested_block
+%type <ast> stmt_list stmt assignment expr if_stmt block return_stmt while_stmt do_while_stmt for_stmt
+%type <ast> var_stmt call_args void_call assignment_call var_decl id var_decl_item var_block_stmt
 %%
 
-program:
-    function_list {
+program: function_list {
         printf("ENTERED: program -> function_list\n");
         if (!check_main_signature()) {
             YYABORT;
         }
-        
-        program_ast = $1;
-        
-        printf("\n=== AST Structure ===\n");
         print_ast($1, 0);
-        printf("=== End of AST ===\n");
+        ast_root = $1; 
     }
     | error {
         yyerror("Could not parse input");
@@ -95,87 +171,140 @@ function_list:
 ;
 
 function:
- /* WITH params AND RETURNS */
-DEF ID LPAREN param_list RPAREN COLON RETURNS type T_BEGIN {
-    if (strcmp($8->name, "string") == 0) {
-        fprintf(stderr, "Semantic Error: Function '%s' cannot have string as return type\n", $2);
-        YYABORT;
+    /* FUNCTION WITH RETURN TYPE - with vars before begin */
+    DEF ID LPAREN par_list_opt RPAREN COLON RETURNS type {
+        begin_function_scope($2);
+        begin_scope();
+        int param_count = has_params($4);
+        char** param_types = get_param_types_from_ast($4, param_count);
+        if (!insert_function($2, $8->name, param_types, param_count, NULL)) {
+            if (param_types) {
+                for (int i = 0; i < param_count; i++) {
+                    free(param_types[i]);
+                }
+                free(param_types);
+            }
+            YYABORT;
+        }
+        if (param_types) {
+            for (int i = 0; i < param_count; i++) {
+                free(param_types[i]);
+            }
+            free(param_types);
+        }
+    } var_stmt_list_opt T_BEGIN stmt_list T_END {
+        $$ = make_node("FUNC", 5,
+            make_node($2, 0),
+            $4,
+            make_node("RET", 1, $8),
+            $10, // var_stmt_list_opt
+            make_node("BODY", 1, $12) // stmt_list
+        );
+        end_scope();
+        end_function_scope();
     }
-    
-    begin_function_scope($2);
-} stmt_list T_END {
-    printf("MATCHED: function WITH RETURNS\n");
-    $$ = make_node("FUNC", 4,
-        make_node($2, 0),
-        $4,
-        make_node("RET", 1, $8),
-        make_node("BODY", 1, $11));
-    
-    int param_count = has_params($4);
-    if (!insert_function($2, $8->name, NULL, param_count, $11)) {
-        YYABORT;
+    /* FUNCTION WITHOUT RETURN TYPE - with vars before begin */
+    | DEF ID LPAREN par_list_opt RPAREN COLON {
+        begin_function_scope($2);
+        begin_scope();
+        int param_count = has_params($4);
+        char** param_types = get_param_types_from_ast($4, param_count);
+        if (!insert_function($2, "NONE", param_types, param_count, NULL)) {
+            if (param_types) {
+                for (int i = 0; i < param_count; i++) {
+                    free(param_types[i]);
+                }
+                free(param_types);
+            }
+            YYABORT;
+        }
+        if (param_types) {
+            for (int i = 0; i < param_count; i++) {
+                free(param_types[i]);
+            }
+            free(param_types);
+        }
+    } var_stmt_list_opt T_BEGIN stmt_list T_END {
+        $$ = make_node("FUNC", 5,
+            make_node($2, 0),
+            $4,
+            make_node("RET", 1, make_node("NONE", 0)),
+            $8, // var_stmt_list_opt
+            make_node("BODY", 1, $10) // stmt_list
+        );
+        end_scope();
+        end_function_scope();
     }
-    end_scope();
-    reset_function_scope();
-}
+    /* FUNCTION WITHOUT RETURN TYPE - begin directly */
+    | DEF ID LPAREN par_list_opt RPAREN COLON T_BEGIN {
+        begin_function_scope($2);
+        begin_scope();
+        int param_count = has_params($4);
+        char** param_types = get_param_types_from_ast($4, param_count);
+        if (!insert_function($2, "NONE", param_types, param_count, NULL)) {
+            if (param_types) {
+                for (int i = 0; i < param_count; i++) {
+                    free(param_types[i]);
+                }
+                free(param_types);
+            }
+            YYABORT;
+        }
+        if (param_types) {
+            for (int i = 0; i < param_count; i++) {
+                free(param_types[i]);
+            }
+            free(param_types);
+        }
+    } stmt_list T_END {
+        $$ = make_node("FUNC", 5,
+            make_node($2, 0),
+            $4,
+            make_node("RET", 1, make_node("NONE", 0)),
+            make_node("EMPTY", 0),
+            make_node("BODY", 1, $9) // stmt_list
+        );
+        end_scope();
+        end_function_scope();
+    }
+    /* FUNCTION WITH RETURN TYPE - begin directly */
+    | DEF ID LPAREN par_list_opt RPAREN COLON RETURNS type T_BEGIN {
+        begin_function_scope($2);
+        begin_scope();
+        int param_count = has_params($4);
+        char** param_types = get_param_types_from_ast($4, param_count);
+        if (!insert_function($2, $8->name, param_types, param_count, NULL)) {
+            if (param_types) {
+                for (int i = 0; i < param_count; i++) {
+                    free(param_types[i]);
+                }
+                free(param_types);
+            }
+            YYABORT;
+        }
+        if (param_types) {
+            for (int i = 0; i < param_count; i++) {
+                free(param_types[i]);
+            }
+            free(param_types);
+        }
+    } stmt_list T_END {
+        $$ = make_node("FUNC", 5,
+            make_node($2, 0),
+            $4,
+            make_node("RET", 1, $8),
+            make_node("EMPTY", 0),
+            make_node("BODY", 1, $11) // stmt_list
+        );
+        end_scope();
+        end_function_scope();
+    }
+;
 
-/* WITHOUT params BUT WITH RETURNS */
-| DEF ID LPAREN RPAREN COLON RETURNS type T_BEGIN {
-    if (strcmp($7->name, "string") == 0) {
-        fprintf(stderr, "Semantic Error: Function '%s' cannot have string as return type\n", $2);
-        YYABORT;
-    }
-    
-    begin_function_scope($2);
-} stmt_list T_END {
-    printf("MATCHED: function WITH RETURNS (empty params)\n");
-    $$ = make_node("FUNC", 4,
-        make_node($2, 0),
-        make_node("PARS", 1, make_node("NONE", 0)),
-        make_node("RET", 1, $7),
-        make_node("BODY", 1, $10));
-    
-    if (!insert_function($2, $7->name, NULL, 0, $10)) {
-        YYABORT;
-    }
-    end_scope();
-    reset_function_scope();
-}
-/* WITH params BUT WITHOUT RETURNS */
-| DEF ID LPAREN param_list RPAREN COLON T_BEGIN {
-    begin_function_scope($2);
-} stmt_list T_END {
-    printf("MATCHED: function WITHOUT RETURNS\n");
-    int param_count = has_params($4);
-    $$ = make_node("FUNC", 4,
-        make_node($2, 0),
-        $4,
-        make_node("RET", 1, make_node("NONE", 0)),
-        make_node("BODY", 1, $9));
-    
-    if (!insert_function($2, "NONE", NULL, param_count, $9)) {
-        YYABORT;
-    }
-    end_scope();
-    reset_function_scope();
-}
-/* WITHOUT params AND WITHOUT RETURNS */
-| DEF ID LPAREN RPAREN COLON T_BEGIN {
-    begin_function_scope($2);
-} stmt_list T_END {
-    printf("MATCHED: function WITHOUT RETURNS (empty params)\n");
-    $$ = make_node("FUNC", 4,
-        make_node($2, 0),
-        make_node("PARS", 1, make_node("NONE", 0)),
-        make_node("RET", 1, make_node("NONE", 0)),
-        make_node("BODY", 1, $8));
-    
-    if (!insert_function($2, "NONE", NULL, 0, $8)) {
-        YYABORT;
-    }
-    end_scope();
-    reset_function_scope();
-}
+
+par_list_opt:
+    param_list { $$ = $1; }
+  | /* empty */ { $$ = make_node("PARS", 1, make_node("NONE", 0)); }
 ;
 
 param_list:
@@ -195,14 +324,23 @@ param_list_item_list:
 
 param_list_item:
     ID type COLON ID {
-        printf("param_list_item matched: %s : %s\n", $1, $4);
+        printf("param_list_item matched: %s %s : %s\n", $1, $2->name, $4);
         
-        if (!insert_variable($1, $2->name)) {
+        if (!insert_variable($4, $2->name)) {
             yyerror("Semantic Error: Parameter already declared");
             YYABORT;
         }
         
         $$ = make_node("par", 3, make_node($1, 0), make_node($2->name, 0), make_node($4, 0));
+    }
+;
+
+id:
+    ID {
+        if (!check_variable_usage($1)) {
+            YYABORT;
+        }
+        $$ = make_node($1, 0);
     }
 ;
 
@@ -223,17 +361,18 @@ stmt_list:
 ;
 
 stmt:
-    assignment { printf("DEBUG: matched stmt -> assignment\n"); $$ = $1; }
+    assignment { printf("DEBUG: matched stmt -> assignment\n");$$ = $1;}
   | if_stmt    { printf("DEBUG: matched stmt -> if_stmt\n"); $$ = $1; }
   | return_stmt { printf("DEBUG: matched stmt -> return_stmt\n"); $$ = $1; }
   | while_stmt {printf("DEBUG: matched stmt -> while_stmt\n"); $$ = $1; }
   | do_while_stmt {printf("DEBUG: matched stmt -> do_while_stmt\n"); $$ = $1; }
   | for_stmt {printf("DEBUG: matched stmt -> for_stmt\n"); $$ = $1; }
-  | call_args {printf("DEBUG: matched stmt -> call_args\n"); $$ = $1; }
-  | var_stmt {printf("DEBUG: matched stmt -> var_stmt\n"); $$ = $1; }
-  | assignment_call {printf("DEBUG: matched stmt -> assignment_call\n"); $$ = $1; }
   | void_call {printf("DEBUG: matched stmt -> void_call\n"); $$ = $1; }
-  | function {printf("DEBUG: matched stmt -> function\n"); $$ = $1; }
+  | var_stmt {printf("DEBUG: matched stmt -> var_stmt\n"); $$ = $1; }
+  | var_block_stmt {printf("DEBUG: matched stmt -> var_block_stmt\n"); $$ = $1; }
+  | assignment_call {printf("DEBUG: matched stmt -> assignment_call\n"); $$ = $1; }
+  | function {printf("DEBUG: matched stmt -> nested function\n"); $$ = $1; }  
+  | nested_block {printf("DEBUG: matched stmt -> nested_block\n"); $$ = $1; }
 ;
 
 assignment:
@@ -270,11 +409,33 @@ assignment:
     }
 ;
 
+var_stmt_list_opt:
+    var_stmt_list_opt var_stmt { 
+        $$ = make_node("VAR-LIST", 2, $1, $2); 
+    }
+  | var_stmt {
+        $$ = $1;
+    }
+  | /* empty */ { 
+        $$ = make_node("EMPTY", 0); 
+    }
+;
+
 var_stmt:
     VAR var_decl_list {
-        printf("DEBUG: Starting var_stmt\n");
-        insert_var_decl_list($2);
+        printf("DEBUG: Starting var_stmt WITHOUT block\n");
         $$ = make_node("VAR-DECLS", 1, $2);
+    }
+;
+
+var_block_stmt:
+    VAR var_decl_list T_BEGIN {
+        begin_scope();
+        printf("DEBUG: Created new scope for VAR block\n");
+    } stmt_list T_END {
+        $$ = make_node("VAR-BLOCK", 2, $2, $5);
+        end_scope();
+        printf("DEBUG: Exited VAR block scope\n");
     }
 ;
 
@@ -290,64 +451,63 @@ var_decl_list:
 ;
 
 var_decl:
-    TYPE_INT COLON ID COLON expr SEMICOLON {
-        printf("DEBUG: in var_decl - TYPE_INT for variable '%s'\n", $3);
-        if (!insert_variable($3, "int")) {
-            yyerror("Semantic Error: Variable already declared");
-            YYABORT;
-        }
-        $$ = make_node("DECL", 2, make_node($3, 0), $5);
-    }
-    | TYPE_REAL COLON ID COLON expr SEMICOLON {
-        printf("DEBUG: in var_decl - TYPE_REAL for variable '%s'\n", $3);
-        if (!insert_variable($3, "real")) {
-            yyerror("Semantic Error: Variable already declared");
-            YYABORT;
-        }
-        $$ = make_node("DECL", 2, make_node($3, 0), $5);
-    }
-    | TYPE_CHAR COLON ID COLON expr SEMICOLON {
-        printf("DEBUG: in var_decl - TYPE_CHAR for variable '%s'\n", $3);
-        if (!insert_variable($3, "char")) {
-            yyerror("Semantic Error: Variable already declared");
-            YYABORT;
-        }
-        $$ = make_node("DECL", 2, make_node($3, 0), $5);
-    }
-    | TYPE_BOOL COLON ID COLON expr SEMICOLON {
-        printf("DEBUG: in var_decl - TYPE_BOOL for variable '%s'\n", $3);
-        if (!insert_variable($3, "bool")) {
-            yyerror("Semantic Error: Variable already declared");
-            YYABORT;
-        }
-        $$ = make_node("DECL", 2, make_node($3, 0), $5);
-    }
-    | TYPE_STRING COLON ID COLON STRING_LITERAL SEMICOLON {
-        printf("DEBUG: in var_decl - TYPE_STRING for variable '%s'\n", $3);
-        if (!insert_variable($3, "string")) {
-            yyerror("Semantic Error: Variable already declared");
-            YYABORT;
-        }
-        $$ = make_node("DECL", 2, make_node($3, 0), make_node($5, 0));
+    TYPE type COLON {
+        strcpy(current_var_type, $2->name);
+    } var_decl_item SEMICOLON {
+        printf("DEBUG: in var_decl - processing var_decl_item\n");
+        $$ = make_node("DECL", 2, make_node($2->name, 0), $5);
     }
 ;
 
-var_assign_list:
-    var_assign_list COMMA var_assign {
-        printf("DEBUG: var_assign_list with comma\n");
-        $$ = make_node("VAR-ASSIGN-LIST", 2, $1, $3);
+var_decl_item:
+    ID {
+        printf("DEBUG: simple var '%s'\n", $1);
+        if (!insert_variable($1, current_var_type)) {
+            yyerror("Semantic Error: Variable already declared");
+            YYABORT;
+        }
+        $$ = make_node($1, 0);
     }
-  | var_assign {
-        printf("DEBUG: var_assign_list single item\n");
-        $$ = $1;
+    | ID COLON expr {
+        printf("DEBUG: initialized var '%s'\n", $1);
+        if (!insert_variable($1, current_var_type)) {
+            yyerror("Semantic Error: Variable already declared");
+            YYABORT;
+        }
+        $$ = make_node("INIT-VAR", 2, make_node($1, 0), $3);
     }
-;
-
-var_assign:
-    ID COLON expr {
-        printf("DEBUG: var_assign for ID '%s'\n", $1);
-        $$ = make_node("ASSIGN", 2, make_node($1, 0), $3);
+    | ID LBRACK NUM RBRACK {
+        printf("DEBUG: array var '%s[%s]'\n", $1, $3);
+        if (!insert_variable($1, current_var_type)) {
+            yyerror("Semantic Error: Variable already declared");
+            YYABORT;
+        }
+        $$ = make_node("ARRAY-VAR", 2, make_node($1, 0), make_node($3, 0));
     }
+    | var_decl_item COMMA ID {
+        printf("DEBUG: adding var '%s' to list\n", $3);
+        if (!insert_variable($3, current_var_type)) {
+            yyerror("Semantic Error: Variable already declared");
+            YYABORT;
+        }
+        $$ = make_node("VAR-LIST", 2, $1, make_node($3, 0));
+    }
+    | var_decl_item COMMA ID COLON expr {
+        printf("DEBUG: adding initialized var '%s' to list\n", $3);
+        if (!insert_variable($3, current_var_type)) {
+            yyerror("Semantic Error: Variable already declared");
+            YYABORT;
+        }
+        $$ = make_node("VAR-LIST", 2, $1, make_node("INIT-VAR", 2, make_node($3, 0), $5));
+    }
+    | var_decl_item COMMA ID LBRACK NUM RBRACK {
+        printf("DEBUG: adding array var '%s[%s]' to list\n", $3, $5);
+        if (!insert_variable($3, current_var_type)) {
+            yyerror("Semantic Error: Variable already declared");
+            YYABORT;
+        }
+        $$ = make_node("VAR-LIST", 2, $1, make_node("ARRAY-VAR", 2, make_node($3, 0), make_node($5, 0)));
+    };
 ;
 
 return_stmt:
@@ -395,7 +555,7 @@ if_stmt:
     {
         char* cond_type = get_expr_type($2);
         if (strcmp(cond_type, "bool") != 0) {
-            fprintf(stderr, "Semantic Error: Condition in if statement must be of type bool, got %s\n", cond_type);
+            fprintf(stderr,"Semantic Error: Condition in if statement must be of type bool, got %s\n", cond_type);
             YYABORT;
         }
         
@@ -502,32 +662,31 @@ void_call:
 ;
 
 do_while_stmt:
-    DO COLON block while_stmt
+    DO COLON block WHILE expr SEMICOLON
     {
-        $$= make_node("do_while",1,$3,make_node("while",1,$4));
+        char* cond_type = get_expr_type($5);
+        if (strcmp(cond_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Condition in do-while loop must be of type bool, got %s\n", cond_type);
+            YYABORT;
+        }
+        
+        $$ = make_node("do_while", 2, $3, $5);
     }
 ;
 
 for_stmt:
-    FOR LPAREN assignment expr SEMICOLON expr RPAREN COLON stmt
+    FOR LPAREN {
+        begin_scope();
+    } assignment expr SEMICOLON expr RPAREN COLON stmt
     {
-        char* cond_type = get_expr_type($4);
+        char* cond_type = get_expr_type($5);
         if (strcmp(cond_type, "bool") != 0) {
             fprintf(stderr, "Semantic Error: Condition in for loop must be of type bool, got %s\n", cond_type);
             YYABORT;
         }
         
-        $$ = make_node("FOR", 4, $3, $4, $6, $9);
-    }
-    | FOR LPAREN assignment expr SEMICOLON expr RPAREN COLON block
-    {
-        char* cond_type = get_expr_type($4);
-        if (strcmp(cond_type, "bool") != 0) {
-            fprintf(stderr, "Semantic Error: Condition in for loop must be of type bool, got %s\n", cond_type);
-            YYABORT;
-        }
-        
-        $$ = make_node("FOR", 4, $3, $4, $6, $9);
+        $$ = make_node("FOR", 4, $4, $5, $7, $10);
+        end_scope();
     }
 ;
 
@@ -572,19 +731,38 @@ call_list:
 ;
 
 block:
-    T_BEGIN stmt_list T_END { 
+    T_BEGIN {
         begin_scope();
-        $$ = make_node("BLOCK", 1, $2);
+    } stmt_list T_END { 
+        $$ = make_node("BLOCK", 1, $3);
+        end_scope();
+    }
+    | T_BEGIN {
+        begin_scope();
+    } T_END { 
+        $$ = make_node("BLOCK", 0);
         end_scope();
     }
 ;
 
-id:
-    ID {
-        if (!check_variable_usage($1)) {
-            YYABORT;
-        }
-        $$ = make_node($1, 0);
+nested_block:
+    T_BEGIN {
+        printf("DEBUG: Starting nested block scope\n");
+        begin_scope();
+    } stmt_list T_END {
+        printf("DEBUG: matched nested_block\n"); 
+        $$ = make_node("NESTED-BLOCK", 1, $3);
+        end_scope();
+        printf("DEBUG: Exited nested block scope\n");
+    }
+    | T_BEGIN {
+        printf("DEBUG: Starting empty nested block scope\n");
+        begin_scope();
+    } T_END {
+        printf("DEBUG: matched empty nested_block\n"); 
+        $$ = make_node("NESTED-BLOCK", 0);
+        end_scope();
+        printf("DEBUG: Exited empty nested block scope\n");
     }
 ;
 
@@ -594,6 +772,8 @@ expr PLUS expr
         char* left_type = get_expr_type($1);
         char* right_type = get_expr_type($3);
         
+        printf("DEBUG: Parser PLUS - left_type='%s', right_type='%s'\n", left_type, right_type);
+        
         if ((strcmp(left_type, "int") != 0 && strcmp(left_type, "real") != 0) ||
             (strcmp(right_type, "int") != 0 && strcmp(right_type, "real") != 0)) {
             fprintf(stderr, "Semantic Error: Arithmetic operator '+' requires int or real operands\n");
@@ -602,6 +782,7 @@ expr PLUS expr
         
         $$ = make_node("+", 2, $1, $3);
     }
+
 | expr MINUS expr 
   {
     char* left_type = get_expr_type($1);
@@ -643,6 +824,19 @@ expr PLUS expr
     }
     
     $$ = make_node("/", 2, $1, $3);
+  }
+| expr MOD expr 
+  {
+    char* left_type = get_expr_type($1);
+    char* right_type = get_expr_type($3);
+    
+    if (strcmp(left_type, "int") != 0 || strcmp(right_type, "int") != 0) {
+        fprintf(stderr, "Semantic Error: Modulo operator '%%' requires int operands, got %s and %s\n",
+                left_type, right_type);
+        YYABORT;
+    }
+    
+    $$ = make_node("%", 2, $1, $3);
   }
 | expr EQ expr 
   {
@@ -726,19 +920,17 @@ expr PLUS expr
     
     $$ = make_node(">=", 2, $1, $3);
   }
-| expr AND expr 
-  {
-    char* left_type = get_expr_type($1);
-    char* right_type = get_expr_type($3);
-    
-    if (strcmp(left_type, "bool") != 0 || strcmp(right_type, "bool") != 0) {
-        fprintf(stderr, "Semantic Error: Logical operator 'AND' requires boolean operands, got %s and %s\n",
-                left_type, right_type);
-        YYABORT;
+| expr AND expr
+    { 
+        char* left_type = get_expr_type($1);
+        char* right_type = get_expr_type($3);
+        if (strcmp(left_type, "bool") != 0 || strcmp(right_type, "bool") != 0) {
+            fprintf(stderr, "Semantic Error: Logical operator 'AND' requires boolean operands, got %s and %s\n",
+                    left_type, right_type);
+            YYABORT;
+        }
+        $$ = make_node("AND", 2, $1, $3);  
     }
-    
-    $$ = make_node("AND", 2, $1, $3);
-  }
 | expr OR expr 
   {
     char* left_type = get_expr_type($1);
@@ -789,7 +981,6 @@ expr PLUS expr
     
     char* var_type = get_variable_type($2);
     
-    // בדיקה שהמשתנה הוא מהטיפוסים המותרים לאופרטור & (סעיף 16)
     if (strcmp(var_type, "int") != 0 && 
         strcmp(var_type, "real") != 0 && 
         strcmp(var_type, "char") != 0) {
@@ -797,13 +988,13 @@ expr PLUS expr
         YYABORT;
     }
     
+    
     $$ = make_node("&", 1, make_node($2, 0));
   }
 | MULT expr 
   {
     char* expr_type = get_expr_type($2);
     
-    // בדיקה אם הטיפוס הוא מצביע (סעיף 17)
     if (strstr(expr_type, "*") == NULL) {
         fprintf(stderr, "Semantic Error: Dereference operator '*' can only be applied to pointers, got %s\n", expr_type);
         YYABORT;
@@ -811,56 +1002,20 @@ expr PLUS expr
     
     $$ = make_node("DEREF", 1, $2);
   }
-| expr ADDRESS ADDRESS expr 
-  {
-    char* left_type = get_expr_type($1);
-    char* right_type = get_expr_type($4);
-    
-    if (strcmp(left_type, "bool") != 0 || strcmp(right_type, "bool") != 0) {
-        fprintf(stderr, "Semantic Error: Logical operator '&&' requires boolean operands, got %s and %s\n",
-                left_type, right_type);
-        YYABORT;
-    }
-    
-    $$ = make_node("AND", 2, $1, $4);
-  }
-| expr BAR BAR expr 
-  {
-    char* left_type = get_expr_type($1);
-    char* right_type = get_expr_type($4);
-    
-    if (strcmp(left_type, "bool") != 0 || strcmp(right_type, "bool") != 0) {
-        fprintf(stderr, "Semantic Error: Logical operator '||' requires boolean operands, got %s and %s\n",
-                left_type, right_type);
-        YYABORT;
-    }
-    
-    $$ = make_node("OR", 2, $1, $4);
-  }
-| '!' expr 
-  {
+| BAR expr BAR {
     char* operand_type = get_expr_type($2);
-    
-    if (strcmp(operand_type, "bool") != 0) {
-        fprintf(stderr, "Semantic Error: Logical NOT operator requires a boolean operand, got %s\n",
-                operand_type);
+
+    if (strcmp(operand_type, "string") == 0) {
+        $$ = make_node("LENGTH", 1, $2);
+    } else if (strcmp(operand_type, "int") == 0 || strcmp(operand_type, "real") == 0) {
+        $$ = make_node("ABS", 1, $2);
+    } else if (strstr(operand_type, "array") != NULL) {
+        $$ = make_node("SIZEOF", 1, $2);
+    } else {
+        fprintf(stderr, "Semantic Error: Operator '|' not applicable to type '%s'\n", operand_type);
         YYABORT;
     }
-    
-    $$ = make_node("NOT", 1, $2);
-  }
-| BAR expr BAR 
-  {
-    char* operand_type = get_expr_type($2);
-    
-    if (strcmp(operand_type, "string") != 0) {
-        fprintf(stderr, "Semantic Error: Absolute value operator '|' can only be applied to strings, got %s\n",
-                operand_type);
-        YYABORT;
-    }
-    
-    $$ = make_node("ABS", 1, $2);
-  }
+}
 | LPAREN expr RPAREN { $$ = $2; }
 | LBRACK expr RBRACK { $$ = $2; }
 | REAL { $$ = make_node($1, 0); }
@@ -906,27 +1061,30 @@ expr PLUS expr
 ;
 
 %%
+
 void yyerror(const char* s) {
     fprintf(stderr, "Syntax Error: %s\n", s);
 }
 
 int main() {
-    printf("DEBUG: Initializing symbol table\n");
-    init_symbol_table();
+    printf("DEBUG: Starting compiler\n");
+    init_symbol_table(); 
+    begin_scope(); 
+    printf("DEBUG: Created global scope 0\n");
     
-    int parse_result = yyparse();
+    int result = yyparse();
     
-    if (parse_result == 0) {
+    if (result == 0) {
         printf("\n=== AC3 Code Generation ===\n");
         
         CodeGenerator cg;
         init_code_generator(&cg);
-        generate_code(&cg, program_ast);
+        generate_code(&cg, ast_root);
         
         printf("=== End of AC3 Code ===\n");
     } else {
         printf("Parsing failed\n");
     }
     
-    return parse_result;
+    return result;
 }
